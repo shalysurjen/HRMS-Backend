@@ -91,6 +91,7 @@ public class DashboardService {
     // EMPLOYEE DASHBOARD
     // ═══════════════════════════════════════════════════════════════
 
+    @Transactional
     public EmployeeDashboardResponse getDashboard(String employeeId) {
         log.info("DASHBOARD employee={}", employeeId);
 
@@ -319,7 +320,7 @@ public class DashboardService {
     // MANAGER DASHBOARD
     // ═══════════════════════════════════════════════════════════════
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ManagerDashboardResponse getManagerDashboard(String managerId) {
         ManagerDashboardResponse response = new ManagerDashboardResponse();
         response.setPersonalStats(getDashboard(managerId));

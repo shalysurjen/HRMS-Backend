@@ -10,6 +10,7 @@ import com.emp_management.shared.exceptions.BadRequestException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
@@ -59,7 +60,7 @@ public class SickLeaveBalanceService {
      * Called during employee onboarding (personal details submission)
      * and on dashboard load to ensure the current month's record exists.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void initializeForCurrentMonth(String employeeId, int year, int month) {
         ensureCurrentMonthInitialized(employeeId, year, month);
     }
