@@ -50,4 +50,13 @@ public interface WfhApplicationRepository extends JpaRepository<WfhApplication, 
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
             @Param("excludeId") Long excludeId);
+    @Query("SELECT w FROM WfhApplication w " +
+            "WHERE w.employee.empId = :empId " +
+            "AND w.status = com.emp_management.shared.enums.RequestStatus.APPROVED " +
+            "AND w.startDate <= :endDate " +
+            "AND w.endDate >= :startDate")
+    List<WfhApplication> findApprovedByEmpIdAndDateRange(
+            @Param("empId") String empId,
+            @Param("startDate") java.time.LocalDate startDate,
+            @Param("endDate") java.time.LocalDate endDate);
 }

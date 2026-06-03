@@ -117,8 +117,15 @@ public class CarryForwardBalanceService {
                 .orElse(0.0);
 
         List<LeaveApplication> cfLeaves = leaveApplicationRepository
-                .findByEmployee_EmpIdAndLeaveType_LeaveTypeAndStatus(
-                        employeeId, "CARRY_FORWARD", RequestStatus.APPROVED);
+                .findByEmployee_EmpIdAndStatusAndYear(
+                        employeeId,
+                        RequestStatus.APPROVED,
+                        year)
+                .stream()
+                .filter(la -> la.getLeaveType() != null
+                        && "CARRY_FORWARD".equalsIgnoreCase(
+                        la.getLeaveType().getLeaveType()))
+                .toList();
 
         Map<Integer, Double> usedByMonth = new LinkedHashMap<>();
         for (int m = 1; m <= 12; m++) usedByMonth.put(m, 0.0);

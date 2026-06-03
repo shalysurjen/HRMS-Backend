@@ -48,11 +48,16 @@ public interface LeaveApplicationRepository extends JpaRepository<LeaveApplicati
 
     List<LeaveApplication> findByEmployee_EmpIdInAndStatus(
             List<String> empIds, RequestStatus status);
-    List<LeaveApplication> findByEmployee_EmpIdAndLeaveType_LeaveTypeAndStatus(
-            String empId,
-            String leaveType,
-            RequestStatus status);
 
+    // ── FIXED: removed startDate/endDate params (was causing build failure) ──
+    @Query("SELECT l FROM LeaveApplication l " +
+            "WHERE l.employee.empId = :empId " +
+            "AND l.leaveType.leaveType = :leaveType " +
+            "AND l.status = :status")
+    List<LeaveApplication> findByEmployee_EmpIdAndLeaveType_LeaveTypeAndStatus(
+            @Param("empId") String empId,
+            @Param("leaveType") String leaveType,
+            @Param("status") RequestStatus status);
 
     // ── Overlap check ─────────────────────────────────────────────
 
@@ -254,21 +259,6 @@ public interface LeaveApplicationRepository extends JpaRepository<LeaveApplicati
             @Param("year") Integer year,
             @Param("month") Integer month);
 
-//    @Query("""
-//        SELECT l FROM LeaveApplication l
-//        WHERE l.employee.empId IN
-//              (SELECT e.empId FROM  e WHERE e.currentApproverId = :managerId)
-//          AND l.status = 'PENDING'
-//        ORDER BY l.createdAt ASC
-//    """)
-//    List<LeaveApplication> findPendingTeamRequests(@Param("managerId") String managerId);
-
-
-
-    // These go into your existing LeaveApplicationRepository
-
-
-    // Managers who approved leaves — returns String empIds now
     @Query("""
     SELECT DISTINCT l.approvedBy FROM LeaveApplication l
     WHERE l.status      = 'APPROVED'
@@ -286,4 +276,38 @@ public interface LeaveApplicationRepository extends JpaRepository<LeaveApplicati
     List<LeaveApplication> findLeavesApprovedByManager(
             @Param("managerId") String managerId,
             @Param("year") Integer year);
+
+    // ── NEW: For attendance report — fetch by empId + status + date range ──
+    // Avoids lazy loading issue by filtering in DB directly
+    @Query("""
+        SELECT l FROM LeaveApplication l
+        JOIN FETCH l.leaveType
+        WHERE l.employee.empId = :empId
+          AND l.status IN :statuses
+          AND l.startDate <= :toDate
+          AND l.endDate   >= :fromDate
+    """)
+    List<LeaveApplication> findByEmployee_EmpIdAndStatusIn(
+            @Param("empId") String empId,
+            @Param("statuses") List<RequestStatus> statuses,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate);
+
+    // ── For 15-column Excel export ────────────────────────────────
+    // JOIN FETCH both employee and leaveType to avoid LazyInitializationException.
+    // Filters by leave start_date range so all leave records in the selected
+    // date range are included regardless of end_date overlap.
+    @Query("""
+        SELECT l FROM LeaveApplication l
+        JOIN FETCH l.employee
+        JOIN FETCH l.leaveType
+        WHERE l.employee.empId = :empId
+          AND l.startDate >= :fromDate
+          AND l.startDate <= :toDate
+        ORDER BY l.startDate ASC
+    """)
+    List<LeaveApplication> findForExportByEmpIdAndDateRange(
+            @Param("empId") String empId,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate);
 }
