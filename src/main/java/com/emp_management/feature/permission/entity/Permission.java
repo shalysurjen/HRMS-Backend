@@ -37,9 +37,8 @@ public class Permission {
     @Column(name = "duration_minutes", nullable = false)
     private Integer durationMinutes;
 
-    @Column(nullable = false, length = 500)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String reason;
-
     // ───────────────── ATTACHMENT DETAILS ─────────────────
 
     @Column(name = "attachment_file_name")
