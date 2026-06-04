@@ -19,10 +19,15 @@ public class PolicyService {
     @Autowired
     private PolicyRepository repository;
 
-    private final String uploadDir = System.getProperty("user.home") + "/emp-uploads/";
+    // ✅ FIX: Windows-safe absolute path (C:\Users\shaly\emp-uploads\policies\)
+    private final String uploadDir = System.getProperty("user.home")
+            + File.separator + "emp-uploads"
+            + File.separator + "policies"
+            + File.separator;
 
     public Policy upload(String name, MultipartFile file) throws Exception {
 
+        // ✅ Auto-create folder if not exists
         File dir = new File(uploadDir);
         if (!dir.exists()) dir.mkdirs();
 
@@ -34,14 +39,15 @@ public class PolicyService {
         Policy policy = new Policy();
         policy.setName(name);
         policy.setFileName(file.getOriginalFilename());
-        policy.setFilePath(dest.getAbsolutePath()); // ✅ IMPORTANT
+        policy.setFilePath(dest.getAbsolutePath());
 
         return repository.save(policy);
     }
+
     public List<Policy> getAll() {
-        return repository.findAll(); // Ensure your repository is injected
+        return repository.findAll();
     }
-    // Inside your PolicyService.java
+
     public List<PolicyResponse> getAllPolicies() {
         return repository.findAll().stream()
                 .map(policy -> new PolicyResponse(

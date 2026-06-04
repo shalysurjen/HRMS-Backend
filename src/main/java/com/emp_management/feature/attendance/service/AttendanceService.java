@@ -17,8 +17,10 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFColor;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.IOException;
@@ -313,5 +315,186 @@ public class AttendanceService {
                 .stream()
                 .map(this::mapToDetail)
                 .toList();
+    }
+
+    // ─── Monthly Summary: All Employees (Admin/CFO) ────────────────
+    public List<AttendanceMonthlySummaryDTO> getMonthlySummaryAll(LocalDate from, LocalDate to) {
+        List<AttendanceSummary> records = repo.findByAttendanceDateBetweenOrderByAttendanceDateAsc(from, to);
+        return buildSummary(records);
+    }
+
+    // ─── Monthly Summary: Team only (Manager) ──────────────────────
+    public List<AttendanceMonthlySummaryDTO> getMonthlySummaryForTeam(List<String> empIds, LocalDate from, LocalDate to) {
+        List<AttendanceSummary> records = repo.findByEmployeeIdInAndAttendanceDateBetweenOrderByAttendanceDateAsc(empIds, from, to);
+        return buildSummary(records);
+    }
+
+    // ─── Core builder: group by employee → compute stats ───────────
+    private List<AttendanceMonthlySummaryDTO> buildSummary(List<AttendanceSummary> records) {
+        Map<String, List<AttendanceSummary>> grouped = records.stream()
+                .collect(java.util.stream.Collectors.groupingBy(AttendanceSummary::getEmployeeId));
+
+        List<AttendanceMonthlySummaryDTO> result = new java.util.ArrayList<>();
+
+        for (Map.Entry<String, List<AttendanceSummary>> entry : grouped.entrySet()) {
+            List<AttendanceSummary> empRecords = entry.getValue();
+            AttendanceMonthlySummaryDTO dto = new AttendanceMonthlySummaryDTO();
+
+            dto.setEmployeeId(entry.getKey());
+            dto.setEmployeeName(empRecords.get(0).getEmployeeName());
+
+            int present = 0, absent = 0, halfDay = 0, wfh = 0, lop = 0, leave = 0, weekend = 0, holiday = 0;
+            long totalMinutes = 0;
+            int workMinuteCount = 0;
+            LocalTime earliest = null;
+            LocalTime latest = null;
+
+            for (AttendanceSummary r : empRecords) {
+                String status = r.getAttendanceStatus() != null ? r.getAttendanceStatus().trim().toUpperCase() : "";
+
+                switch (status) {
+                    case "PRESENT", "ACTIVE" -> present++;
+                    case "ABSENT"            -> absent++;
+                    case "HALF_DAY", "FIRST_HALF", "SECOND_HALF" -> halfDay++;
+                    case "WFH"               -> wfh++;
+                    case "LOP"               -> lop++;
+                    case "LEAVE"             -> leave++;
+                    case "WEEKEND"           -> weekend++;
+                    case "HOLIDAY"           -> holiday++;
+                    default                  -> {}
+                }
+
+                if (r.isLopTriggered()) lop++;
+
+                if (r.getWorkingHours() != null) {
+                    long mins = r.getWorkingHours().getHour() * 60L + r.getWorkingHours().getMinute();
+                    if (mins > 0) {
+                        totalMinutes += mins;
+                        workMinuteCount++;
+                    }
+                }
+
+                if (r.getCheckIn() != null) {
+                    if (earliest == null || r.getCheckIn().isBefore(earliest)) earliest = r.getCheckIn();
+                }
+                if (r.getCheckOut() != null) {
+                    if (latest == null || r.getCheckOut().isAfter(latest)) latest = r.getCheckOut();
+                }
+            }
+
+            dto.setTotalWorkingDays(empRecords.size() - weekend - holiday);
+            dto.setPresentDays(present);
+            dto.setAbsentDays(absent);
+            dto.setHalfDays(halfDay);
+            dto.setWfhDays(wfh);
+            dto.setLopDays(lop);
+            dto.setLeaveDays(leave);
+            dto.setWeekendCount(weekend);
+            dto.setHolidayCount(holiday);
+
+            long totalH = totalMinutes / 60, totalM = totalMinutes % 60;
+            dto.setTotalWorkingHours(String.format("%d:%02d", totalH, totalM));
+            dto.setAvgWorkingHours(workMinuteCount > 0
+                    ? String.format("%02d:%02d", (totalMinutes / workMinuteCount) / 60, (totalMinutes / workMinuteCount) % 60)
+                    : "00:00");
+            dto.setEarliestCheckIn(earliest != null ? earliest.toString().substring(0, 5) : "--:--");
+            dto.setLatestCheckOut(latest != null ? latest.toString().substring(0, 5) : "--:--");
+
+            result.add(dto);
+        }
+
+        result.sort(java.util.Comparator.comparing(AttendanceMonthlySummaryDTO::getEmployeeName,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        return result;
+    }
+
+    // ─── Excel Export for Monthly Summary ──────────────────────────
+    public ByteArrayInputStream exportMonthlySummaryToExcel(
+            List<AttendanceMonthlySummaryDTO> summaries, LocalDate from, LocalDate to) {
+
+        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+
+            Sheet sheet = workbook.createSheet("Monthly Summary");
+
+            // Title style
+            CellStyle titleStyle = workbook.createCellStyle();
+            Font titleFont = workbook.createFont();
+            titleFont.setBold(true);
+            titleFont.setFontHeightInPoints((short) 13);
+            titleFont.setColor(IndexedColors.DARK_BLUE.getIndex());
+            titleStyle.setFont(titleFont);
+
+            Row titleRow = sheet.createRow(0);
+            Cell titleCell = titleRow.createCell(0);
+            titleCell.setCellValue("Monthly Attendance Summary — " + from + " to " + to);
+            titleCell.setCellStyle(titleStyle);
+            sheet.addMergedRegion(new org.apache.poi.ss.util.CellRangeAddress(0, 0, 0, 14));
+
+            // Header style
+            Font hFont = workbook.createFont();
+            hFont.setBold(true);
+            hFont.setColor(IndexedColors.WHITE.getIndex());
+            CellStyle hStyle = workbook.createCellStyle();
+            hStyle.setFont(hFont);
+            hStyle.setFillForegroundColor(IndexedColors.DARK_TEAL.getIndex());
+            hStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            hStyle.setBorderBottom(BorderStyle.THIN);
+            hStyle.setAlignment(HorizontalAlignment.CENTER);
+
+            String[] cols = {
+                    "Emp ID", "Employee Name",
+                    "Working Days", "Present", "Absent", "Half Day",
+                    "WFH", "Leave", "LOP", "Weekend", "Holiday",
+                    "Total Hours", "Avg Hrs/Day", "Earliest In", "Latest Out"
+            };
+
+            Row hRow = sheet.createRow(1);
+            for (int i = 0; i < cols.length; i++) {
+                Cell c = hRow.createCell(i);
+                c.setCellValue(cols[i]);
+                c.setCellStyle(hStyle);
+            }
+
+            // Even row style
+            CellStyle evenStyle = workbook.createCellStyle();
+            evenStyle.setFillForegroundColor(new XSSFColor(new byte[]{(byte)235, (byte)245, (byte)251}, null));
+            evenStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+
+            int rowIdx = 2;
+            for (AttendanceMonthlySummaryDTO s : summaries) {
+                Row row = sheet.createRow(rowIdx);
+                CellStyle rowStyle = (rowIdx % 2 == 0) ? evenStyle : workbook.createCellStyle();
+                String[] values = {
+                        s.getEmployeeId(), s.getEmployeeName(),
+                        String.valueOf(s.getTotalWorkingDays()),
+                        String.valueOf(s.getPresentDays()),
+                        String.valueOf(s.getAbsentDays()),
+                        String.valueOf(s.getHalfDays()),
+                        String.valueOf(s.getWfhDays()),
+                        String.valueOf(s.getLeaveDays()),
+                        String.valueOf(s.getLopDays()),
+                        String.valueOf(s.getWeekendCount()),
+                        String.valueOf(s.getHolidayCount()),
+                        s.getTotalWorkingHours(),
+                        s.getAvgWorkingHours(),
+                        s.getEarliestCheckIn(),
+                        s.getLatestCheckOut()
+                };
+                for (int i = 0; i < values.length; i++) {
+                    Cell cell = row.createCell(i);
+                    cell.setCellValue(values[i]);
+                    cell.setCellStyle(rowStyle);
+                }
+                rowIdx++;
+            }
+
+            for (int i = 0; i < cols.length; i++) sheet.autoSizeColumn(i);
+
+            workbook.write(out);
+            return new ByteArrayInputStream(out.toByteArray());
+
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to generate summary Excel", e);
+        }
     }
 }

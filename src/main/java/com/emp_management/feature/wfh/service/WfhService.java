@@ -407,9 +407,14 @@ public class WfhService {
             String body = String.format(
                     "%s has applied for Work From Home from %s to %s (%s days). Awaiting your approval.",
                     employee.getName(), wfh.getStartDate(), wfh.getEndDate(), wfh.getTotalDays());
+            // EMAIL notification
             notificationService.createNotification(
                     approver.getEmpId(), employee.getEmail(), approver.getEmail(),
                     EventType.LEAVE_APPLIED, Channel.EMAIL, subject, body);
+            // IN_APP notification (bell icon)
+            notificationService.createNotification(
+                    approver.getEmpId(), employee.getEmail(), approver.getEmail(),
+                    EventType.LEAVE_APPLIED, Channel.IN_APP, subject, body);
         });
     }
 

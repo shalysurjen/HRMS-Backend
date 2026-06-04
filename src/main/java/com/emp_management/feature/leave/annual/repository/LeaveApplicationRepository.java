@@ -278,12 +278,47 @@ public interface LeaveApplicationRepository extends JpaRepository<LeaveApplicati
     List<String> findManagersWhoApprovedLeaves(@Param("year") Integer year);
 
     @Query("""
-    SELECT l FROM LeaveApplication l
-    WHERE l.approvedBy = :managerId
-      AND l.year       = :year
-    ORDER BY l.approvedAt DESC
+        SELECT l FROM LeaveApplication l
+        WHERE l.approvedBy = :managerId
+          AND l.year       = :year
+        ORDER BY l.approvedAt DESC
 """)
     List<LeaveApplication> findLeavesApprovedByManager(
             @Param("managerId") String managerId,
             @Param("year") Integer year);
+
+    // ── Leave Export: all employees by created-date or start-date range ──
+    @Query("""
+        SELECT l FROM LeaveApplication l
+        WHERE (l.startDate >= :from AND l.startDate <= :to)
+           OR (CAST(l.createdAt AS LocalDate) >= :from AND CAST(l.createdAt AS LocalDate) <= :to)
+        ORDER BY l.createdAt ASC
+    """)
+    List<LeaveApplication> findByStartDateBetweenOrCreatedAtBetween(
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
+
+    // ── Leave Export: team members by empId list + date range ───────────
+    @Query("""
+        SELECT l FROM LeaveApplication l
+        WHERE l.employee.empId IN :empIds
+          AND (l.startDate >= :from AND l.startDate <= :to)
+        ORDER BY l.createdAt ASC
+    """)
+    List<LeaveApplication> findByEmployeeIdsAndDateRange(
+            @Param("empIds") List<String> empIds,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
+
+    // ── Leave Export: by start-date month + year (all statuses) ─────────
+    // FIX: replaces LeaveExportService.exportByMonth() findAll() + in-memory stream filter
+    @Query("""
+        SELECT l FROM LeaveApplication l
+        WHERE MONTH(l.startDate) = :month
+          AND YEAR(l.startDate)  = :year
+        ORDER BY l.createdAt ASC
+    """)
+    List<LeaveApplication> findByStartDateMonthAndYear(
+            @Param("month") int month,
+            @Param("year") int year);
 }

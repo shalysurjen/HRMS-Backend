@@ -4,6 +4,7 @@ import com.emp_management.feature.employee.entity.Employee;
 import com.emp_management.feature.employee.repository.EmployeeRepository;
 import com.emp_management.feature.leave.annual.dto.LeaveApplicationResponseDTO;
 import com.emp_management.feature.leave.annual.dto.LeaveApplicationWithAttachmentsDto;
+import com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO;
 import com.emp_management.feature.leave.annual.dto.LeaveResponse;
 import com.emp_management.feature.leave.annual.entity.LeaveApplication;
 import com.emp_management.feature.leave.annual.entity.LeaveAttachment;
@@ -11,6 +12,8 @@ import com.emp_management.feature.leave.annual.entity.LeaveType;
 import com.emp_management.feature.leave.annual.repository.LeaveTypeRepository;
 import com.emp_management.feature.leave.annual.service.LeaveApplicationService;
 import com.emp_management.feature.leave.annual.service.LeaveAttachmentService;
+import com.emp_management.feature.leave.annual.service.LeaveExportService;
+import com.emp_management.feature.leave.annual.dto.LeaveExportRequest;
 import com.emp_management.shared.enums.HalfDayType;
 import com.emp_management.shared.enums.RequestStatus;
 import com.emp_management.shared.exceptions.BadRequestException;
@@ -32,6 +35,8 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.io.ByteArrayInputStream;
+import org.springframework.core.io.InputStreamResource;
 
 @RestController
 @RequestMapping("/v1/leaves")
@@ -41,17 +46,20 @@ public class LeaveApplicationController {
     private final LeaveAttachmentService  leaveAttachmentService;
     private final EmployeeRepository employeeRepository;
     private final LeaveTypeRepository leaveTypeRepository;
+    private final LeaveExportService  leaveExportService;
 
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     public LeaveApplicationController(LeaveApplicationService leaveApplicationService,
                                       LeaveAttachmentService leaveAttachmentService,
                                       EmployeeRepository employeeRepository,
-                                      LeaveTypeRepository leaveTypeRepository) {
+                                      LeaveTypeRepository leaveTypeRepository,
+                                      LeaveExportService leaveExportService) {
         this.leaveApplicationService = leaveApplicationService;
         this.leaveAttachmentService  = leaveAttachmentService;
         this.employeeRepository      = employeeRepository;
         this.leaveTypeRepository     = leaveTypeRepository;
+        this.leaveExportService      = leaveExportService;
     }
 
     @PostMapping(value = "/apply", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -207,5 +215,95 @@ public class LeaveApplicationController {
             @RequestParam String employeeId) {
         leaveApplicationService.cancelEmployeeLeave(id, employeeId);
         return ResponseEntity.ok("Leave cancelled successfully.");
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  LEAVE EXPORT ENDPOINTS
+    // ════════════════════════════════════════════════════════════════
+
+    /**
+     * GET /v1/leaves/export?month=5&year=2026  → Excel for that month
+     * GET /v1/leaves/export                     → Excel for all time
+     *
+     * Columns: Application Created Date | Employee ID | Employee Name | Leave Type |
+     *          Start Date | End Date | Start of the Day | No. of Days | Leave Year |
+     *          First Approver | First Approval Date | First Approval Decision |
+     *          Second Approver | Second Approval Date | Second Approval Decision
+     */
+    @GetMapping("/export")
+    public ResponseEntity<InputStreamResource> exportLeaves(
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) Integer year) {
+
+        ByteArrayInputStream excelStream;
+        String filename;
+
+        if (month != null && year != null) {
+            excelStream = leaveExportService.exportByMonth(month, year);
+            String monthName = java.time.Month.of(month).name();
+            filename = "Employee_Leave_Export_"
+                    + monthName.charAt(0)
+                    + monthName.substring(1).toLowerCase()
+                    + year + ".xlsx";
+        } else {
+            excelStream = leaveExportService.exportAll();
+            filename = "Employee_Leave_Export_All.xlsx";
+        }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + filename);
+        headers.add(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate");
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(new InputStreamResource(excelStream));
+    }
+
+    /** JSON preview — all employees (Admin/CFO) */
+    @GetMapping("/export/all")
+    public ResponseEntity<List<LeaveExportRowDTO>> exportAll(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate) {
+        return ResponseEntity.ok(leaveApplicationService.getLeaveExportAll(fromDate, toDate));
+    }
+
+    /** JSON preview — team members (Manager) */
+    @PostMapping("/export/team")
+    public ResponseEntity<List<LeaveExportRowDTO>> exportTeam(
+            @RequestBody LeaveExportRequest request) {
+        return ResponseEntity.ok(leaveApplicationService.getLeaveExportForTeam(
+                request.getEmpIds(), request.getFromDate(), request.getToDate()));
+    }
+
+    /** Excel download — all employees */
+    @GetMapping("/export/download/all")
+    public ResponseEntity<InputStreamResource> downloadAll(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate) {
+        List<LeaveExportRowDTO> rows = leaveApplicationService.getLeaveExportAll(fromDate, toDate);
+        ByteArrayInputStream in = leaveApplicationService.exportLeaveToExcel(rows);
+        String fileName = "Employee_Leave_Export_" + fromDate + "_to_" + toDate + ".xlsx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(new InputStreamResource(in));
+    }
+
+    /** Excel download — team members */
+    @PostMapping("/export/download/team")
+    public ResponseEntity<InputStreamResource> downloadTeam(
+            @RequestBody LeaveExportRequest request) {
+        List<LeaveExportRowDTO> rows = leaveApplicationService.getLeaveExportForTeam(
+                request.getEmpIds(), request.getFromDate(), request.getToDate());
+        ByteArrayInputStream in = leaveApplicationService.exportLeaveToExcel(rows);
+        String fileName = "Team_Leave_Export_" + request.getFromDate() + "_to_" + request.getToDate() + ".xlsx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(new InputStreamResource(in));
     }
 }

@@ -63,6 +63,7 @@ public class AppraisalService {
     private final AppraisalStatusHistoryRepository   historyRepo;
     private final EmployeeRepository                 employeeRepo;
     private final AppraisalNotificationService       notificationService;
+    private final AppraisalProjectRepository         projectRepo;
 
     public AppraisalService(AppraisalCycleRepository cycleRepo,
                             AppraisalQuestionRepository questionRepo,
@@ -71,7 +72,8 @@ public class AppraisalService {
                             AppraisalRemarkRepository remarkRepo,
                             AppraisalStatusHistoryRepository historyRepo,
                             EmployeeRepository employeeRepo,
-                            AppraisalNotificationService notificationService) {
+                            AppraisalNotificationService notificationService,
+                            AppraisalProjectRepository projectRepo) {
         this.cycleRepo           = cycleRepo;
         this.questionRepo        = questionRepo;
         this.appraisalRepo       = appraisalRepo;
@@ -80,6 +82,7 @@ public class AppraisalService {
         this.historyRepo         = historyRepo;
         this.employeeRepo        = employeeRepo;
         this.notificationService = notificationService;
+        this.projectRepo         = projectRepo;
     }
 
     // ── Cycles ────────────────────────────────────────────────────────────────
@@ -827,6 +830,21 @@ public class AppraisalService {
 
                         // Self answer
                         String selfAnswer = (ans != null && ans.getAnswerText() != null) ? ans.getAnswerText() : "—";
+
+                        // ── Append project list for Q06 (project question) ──
+                        if (q.getQuestionText() != null && q.getQuestionText().toLowerCase().contains("project")) {
+                            List<AppraisalProject> projs = projectRepo.findByAppraisal_IdAndQuestion_Id(appraisal.getId(), q.getId());
+                            if (!projs.isEmpty()) {
+                                StringBuilder sb = new StringBuilder(selfAnswer.equals("—") ? "" : selfAnswer + "\n\n");
+                                sb.append("Projects:\n");
+                                for (int pi = 0; pi < projs.size(); pi++) {
+                                    sb.append(String.format("%02d. %s\n    %s\n",
+                                            pi + 1, projs.get(pi).getProjectName(),
+                                            projs.get(pi).getDescription() != null ? projs.get(pi).getDescription() : ""));
+                                }
+                                selfAnswer = sb.toString().trim();
+                            }
+                        }
                         PdfPCell selfCell = new PdfPCell(new Phrase(selfAnswer, normalFont));
                         selfCell.setPadding(4); selfCell.setBackgroundColor(rowBg);
                         qTable.addCell(selfCell);
@@ -1127,6 +1145,21 @@ public class AppraisalService {
                     qTable.addCell(qCell);
 
                     String selfAnswer = (ans != null && ans.getAnswerText() != null) ? ans.getAnswerText() : "—";
+
+                    // ── Append project list for Q06 (project question) ──
+                    if (q.getQuestionText() != null && q.getQuestionText().toLowerCase().contains("project")) {
+                        List<AppraisalProject> projs = projectRepo.findByAppraisal_IdAndQuestion_Id(appraisal.getId(), q.getId());
+                        if (!projs.isEmpty()) {
+                            StringBuilder sb = new StringBuilder(selfAnswer.equals("—") ? "" : selfAnswer + "\n\n");
+                            sb.append("Projects:\n");
+                            for (int pi = 0; pi < projs.size(); pi++) {
+                                sb.append(String.format("%02d. %s\n    %s\n",
+                                        pi + 1, projs.get(pi).getProjectName(),
+                                        projs.get(pi).getDescription() != null ? projs.get(pi).getDescription() : ""));
+                            }
+                            selfAnswer = sb.toString().trim();
+                        }
+                    }
                     PdfPCell selfCell = new PdfPCell(new Phrase(selfAnswer, normalFont));
                     selfCell.setPadding(4); selfCell.setBackgroundColor(rowBg);
                     qTable.addCell(selfCell);

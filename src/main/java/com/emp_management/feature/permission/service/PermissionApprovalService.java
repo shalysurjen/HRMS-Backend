@@ -207,12 +207,22 @@ public class PermissionApprovalService {
                             permission.getEndTime(),
                             firstApprover.getName());
 
+                    // EMAIL notification
                     notificationService.createNotification(
                             mgr.getEmpId(),
                             firstApprover.getEmail(),
                             mgr.getEmail(),
                             EventType.PERMISSION_APPLIED,
                             Channel.EMAIL,
+                            subject,
+                            body);
+                    // IN_APP notification (bell icon)
+                    notificationService.createNotification(
+                            mgr.getEmpId(),
+                            firstApprover.getEmail(),
+                            mgr.getEmail(),
+                            EventType.PERMISSION_APPLIED,
+                            Channel.IN_APP,
                             subject,
                             body);
                 });
@@ -243,14 +253,25 @@ public class PermissionApprovalService {
                             approver.getName(),
                             comments);
 
+                    EventType permEvt = status == RequestStatus.APPROVED
+                            ? EventType.PERMISSION_APPROVED
+                            : EventType.PERMISSION_REJECTED;
+                    // EMAIL notification
                     notificationService.createNotification(
                             emp.getEmpId(),
                             approver.getEmail(),
                             emp.getEmail(),
-                            status == RequestStatus.APPROVED
-                                    ? EventType.PERMISSION_APPROVED
-                                    : EventType.PERMISSION_REJECTED,
+                            permEvt,
                             Channel.EMAIL,
+                            subject,
+                            body);
+                    // IN_APP notification (bell icon)
+                    notificationService.createNotification(
+                            emp.getEmpId(),
+                            approver.getEmail(),
+                            emp.getEmail(),
+                            permEvt,
+                            Channel.IN_APP,
                             subject,
                             body);
                 });
@@ -264,12 +285,22 @@ public class PermissionApprovalService {
                 .ifPresent(emp -> {
                     String subject = "Permission Update — " + permission.getPermissionDate();
 
+                    // EMAIL notification
                     notificationService.createNotification(
                             emp.getEmpId(),
                             approver.getEmail(),
                             emp.getEmail(),
                             EventType.PERMISSION_APPLIED,
                             Channel.EMAIL,
+                            subject,
+                            message);
+                    // IN_APP notification (bell icon)
+                    notificationService.createNotification(
+                            emp.getEmpId(),
+                            approver.getEmail(),
+                            emp.getEmail(),
+                            EventType.PERMISSION_APPLIED,
+                            Channel.IN_APP,
                             subject,
                             message);
                 });
