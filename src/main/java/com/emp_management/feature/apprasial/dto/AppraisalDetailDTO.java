@@ -1,6 +1,5 @@
 package com.emp_management.feature.apprasial.dto;
 
-import com.emp_management.feature.apprasial.entity.AppraisalStatusHistory;
 import com.emp_management.feature.apprasial.enums.AppraisalStatus;
 
 import java.time.LocalDateTime;
@@ -21,13 +20,10 @@ public class AppraisalDetailDTO {
     private String cycleLabel;
     private AppraisalStatus status;
     private LocalDateTime submittedAt;
-    private LocalDateTime l1ReviewedAt;   // NEW
+    private LocalDateTime l1ReviewedAt;
     private LocalDateTime publishedAt;
-
-    /** NEW: overall average of all self-ratings across all sections. */
     private Double overallAvgRating;
 
-    // Approver identity fields — always populated so L2 can see L1's info
     private String firstApproverId;
     private String firstApproverName;
     private String finalApproverId;
@@ -40,7 +36,6 @@ public class AppraisalDetailDTO {
 
     public AppraisalDetailDTO() {}
 
-    // ── Getters / Setters ────────────────────────────────────────────────────
     public Long getAppraisalId() { return appraisalId; }          public void setAppraisalId(Long v)          { appraisalId = v; }
     public String getEmployeeId() { return employeeId; }          public void setEmployeeId(String v)         { employeeId = v; }
     public String getEmployeeName() { return employeeName; }      public void setEmployeeName(String v)       { employeeName = v; }
@@ -71,8 +66,6 @@ public class AppraisalDetailDTO {
     public static class SectionDTO {
         private String sectionName;
         private List<QuestionAnswerDTO> questions;
-
-        /** NEW: average of selfRating for all rated questions in this section. */
         private Double sectionAvgRating;
 
         public SectionDTO() {}
@@ -87,23 +80,25 @@ public class AppraisalDetailDTO {
         private String inputType;
         private boolean isRequired;
 
-        // Employee self-assessment
         private String answerText;
         private Integer selfRating;
 
-        // L1 reviewer fields (stored on SelfAppraisalAnswer)
+        // L1 reviewer fields
         private Integer revisedRating;
         private String revisedRemarks;
 
-        // L2 / final reviewer fields (stored on SelfAppraisalAnswer)
+        // L2 / final reviewer fields
         private Integer finalRating;
         private String finalRemarks;
 
-        // Legacy remark fields sourced from AppraisalRemark (kept for backward compat)
+        // Legacy remark-table fallback fields
         private String l1Remark;
         private Integer l1RevisedRating;
         private String l2Remark;
         private Integer l2RevisedRating;
+
+        // ── NEW: projects for Q6 (Performance > "project" question) ──────────
+        private List<ProjectItem> projects;
 
         public QuestionAnswerDTO() {}
 
@@ -121,19 +116,33 @@ public class AppraisalDetailDTO {
         public Integer getL1RevisedRating() { return l1RevisedRating; }  public void setL1RevisedRating(Integer v)  { l1RevisedRating = v; }
         public String getL2Remark() { return l2Remark; }                 public void setL2Remark(String v)          { l2Remark = v; }
         public Integer getL2RevisedRating() { return l2RevisedRating; }  public void setL2RevisedRating(Integer v)  { l2RevisedRating = v; }
+        public List<ProjectItem> getProjects() { return projects; }      public void setProjects(List<ProjectItem> v) { projects = v; }
+    }
+
+    /** Lightweight project item embedded inside QuestionAnswerDTO. */
+    public static class ProjectItem {
+        private Long id;
+        private String projectName;
+        private String description;
+
+        public ProjectItem() {}
+        public ProjectItem(Long id, String projectName, String description) {
+            this.id = id;
+            this.projectName = projectName;
+            this.description = description;
+        }
+
+        public Long getId() { return id; }                       public void setId(Long v)              { id = v; }
+        public String getProjectName() { return projectName; }   public void setProjectName(String v)   { projectName = v; }
+        public String getDescription() { return description; }   public void setDescription(String v)   { description = v; }
     }
 
     public static class StatusHistoryDTO {
         private String fromStatus;
         private String toStatus;
         private String changedBy;
-
-        /** NEW: human-readable name of the actor (e.g. "Ravi Kumar"). */
         private String changedByName;
-
-        /** NEW: semantic action type for timeline badges / filtering. */
         private String actionType;
-
         private String remarks;
         private LocalDateTime changedAt;
 

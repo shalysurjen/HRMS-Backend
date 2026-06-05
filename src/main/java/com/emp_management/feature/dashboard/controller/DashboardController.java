@@ -9,6 +9,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+
 import java.util.List;
 import java.util.Map;
 
@@ -223,6 +227,21 @@ public class DashboardController {
         }
     }
 
+    @GetMapping("/team-members/{Id}/paged")
+    public ResponseEntity<Page<TeamMember>> getTeamMembersPaged(
+            @PathVariable String Id,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        log.info("[API] GET team members paged: manager={}, page={}, size={}", Id, page, size);
+        try {
+            Pageable pageable = PageRequest.of(page, size);
+            return ResponseEntity.ok(dashboardService.getTeamMembersPaged(Id, pageable));
+        } catch (Exception e) {
+            log.error("[API] Error: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
     // ✅ UPDATED: Added hasRole('ADMIN') access too
     @GetMapping("/hr/low-balance")
     @PreAuthorize("hasRole('HR') or hasRole('ADMIN')")
@@ -294,4 +313,3 @@ public class DashboardController {
 //        }
 //    }
 }
-

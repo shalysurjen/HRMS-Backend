@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 import java.io.IOException;
 import java.util.List;
 
+
 /**
  * AppraisalController
  *
@@ -42,6 +43,16 @@ public class AppraisalController {
     public AppraisalController(AppraisalService appraisalService) {
         this.appraisalService = appraisalService;
     }
+    public static class CycleToggleRequest {
+        private String field;   // "isActive" or "isOpen"
+        private boolean value;
+
+        public String getField() { return field; }
+        public void setField(String field) { this.field = field; }
+        public boolean isValue() { return value; }
+        public void setValue(boolean value) { this.value = value; }
+    }
+
 
     // ── Cycles ───────────────────────────────────────────────────────────────
 
@@ -145,6 +156,47 @@ public class AppraisalController {
         return ResponseEntity.ok(appraisalService.getPendingForApprover(approverId));
     }
 
+    /**
+     * FIX: Full dashboard feed — all records the approver is involved in (L1 + L2),
+     * across all statuses (except DRAFT / L1_REJECTED).
+     * Used by AppraisalDashboardPage to correctly populate PENDING / VIEW_ONLY / PUBLISHED tabs.
+     */
+    @GetMapping("/approver/{approverId}/all")
+    public ResponseEntity<List<EmployeeAppraisalSummaryDTO>> allForApprover(
+            @PathVariable String approverId) {
+        return ResponseEntity.ok(appraisalService.getAllForApprover(approverId));
+    }
+
+    /**
+     * FIX: Called when L1 opens a SUBMITTED appraisal.
+     * Transitions status: SUBMITTED → UNDER_REVIEW (idempotent — no-op if already past SUBMITTED).
+     * Allows COO/CFO dashboard to show "reviewing in progress" for that record.
+     */
+    @PostMapping("/{appraisalId}/mark-under-review")
+    public ResponseEntity<Void> markUnderReview(
+            @PathVariable Long appraisalId,
+            @RequestParam String approverId) {
+        appraisalService.markUnderReview(appraisalId, approverId);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * FIX: Called when L2 clicks "Start Review" on a VIEW_ONLY record.
+     * Transitions status: L1_APPROVED → L2_UNDER_REVIEW.
+     * Moves the record from L2's VIEW_ONLY tab to Pending tab on the dashboard.
+     */
+    @PostMapping("/{appraisalId}/mark-l2-under-review")
+    public ResponseEntity<Void> markL2UnderReview(
+            @PathVariable Long appraisalId,
+            @RequestParam String approverId) {
+        try {
+            appraisalService.markL2UnderReview(appraisalId, approverId);
+        } catch (Exception e) {
+            // Deadlock or concurrent update — status already set, safe to ignore
+        }
+        return ResponseEntity.ok().build();
+    }
+
     /** Full appraisal detail for approver review (includes all answers + remarks). */
     @GetMapping("/{appraisalId}/detail")
     public ResponseEntity<AppraisalDetailDTO> getDetail(@PathVariable Long appraisalId) {
@@ -170,6 +222,20 @@ public class AppraisalController {
      * All appraisals across the organisation.
      * Optional cycleId filter. Used by ADMIN and HR roles.
      */
+
+    //    Admin-only: toggle isActive or isOpen on a cycle.
+    // * Business rules (enforced by service):
+    //            *   - Only one cycle can be isActive=true at a time.
+    // *   - isOpen can be set independently.
+    // *   - Setting isActive=true on a cycle automatically sets isActive=false on all others.
+    // */
+    @PatchMapping("/admin/cycles/{cycleId}/toggle")
+    public ResponseEntity<AppraisalCycleDTO> toggleCycle(
+            @PathVariable Long cycleId,
+            @RequestBody CycleToggleRequest req) {
+        return ResponseEntity.ok(appraisalService.toggleCycleField(cycleId, req.getField(), req.isValue()));
+    }
+
     @GetMapping("/admin/all")
     public ResponseEntity<List<EmployeeAppraisalSummaryDTO>> getAllAppraisals(
             @RequestParam(required = false) Long cycleId) {

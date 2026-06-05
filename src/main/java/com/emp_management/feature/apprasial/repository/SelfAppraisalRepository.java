@@ -12,4 +12,11 @@ public interface SelfAppraisalRepository extends JpaRepository<SelfAppraisal, Lo
     List<SelfAppraisal> findByFirstApproverIdAndStatusIn(String approverId, List<AppraisalStatus> statuses);
     List<SelfAppraisal> findByFinalApproverIdAndStatusIn(String approverId, List<AppraisalStatus> statuses);
     List<SelfAppraisal> findByCycle_Id(Long cycleId);
+
+    // FIX: needed for getAllForL1Approver — fetch ALL records for L1 except excluded statuses
+    // (so L1 sees submitted, under-review, approved, rejected, published — everything except DRAFT & L1_REJECTED)
+    List<SelfAppraisal> findByFirstApproverIdAndStatusNotIn(String approverId, List<AppraisalStatus> excludedStatuses);
+
+    // FIX: needed for getAllForL2Approver — already used in patched service
+    List<SelfAppraisal> findByFinalApproverIdAndStatusNotIn(String approverId, List<AppraisalStatus> excludedStatuses);
 }

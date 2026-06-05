@@ -33,6 +33,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 @Service
 @Transactional(readOnly = true)
@@ -286,6 +289,30 @@ public class DashboardService {
                             });
                     return dto;
                 }).collect(Collectors.toList());
+    }
+
+    public Page<TeamMember> getTeamMembersPaged(String managerId, Pageable pageable) {
+        List<TeamMember> allMembers = employeeRepository.findActiveTeamMembers(managerId).stream()
+                .map(member -> {
+                    TeamMember dto = new TeamMember();
+                    dto.setEmployeeId(member.getEmpId());
+                    dto.setEmployeeName(member.getName());
+                    employeePersonalDetailsRepository
+                            .findByEmployee_EmpId(member.getEmpId())
+                            .ifPresent(d -> {
+                                dto.setDesignation(d.getDesignation());
+                                dto.setSkills(d.getSkillSet());
+                            });
+                    return dto;
+                }).collect(Collectors.toList());
+
+        int start = (int) pageable.getOffset();
+        int end = Math.min(start + pageable.getPageSize(), allMembers.size());
+        List<TeamMember> pageContent = (start >= allMembers.size())
+                ? Collections.emptyList()
+                : allMembers.subList(start, end);
+
+        return new PageImpl<>(pageContent, pageable, allMembers.size());
     }
 
     // ═══════════════════════════════════════════════════════════════

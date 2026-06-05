@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.time.Period;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
 import com.lowagie.text.Document;
 import com.lowagie.text.DocumentException;
@@ -97,6 +98,43 @@ public class AppraisalService {
             dto.setOpen(c.isOpen());
             return dto;
         }).collect(Collectors.toList());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Toggle isActive or isOpen on a cycle.
+    // If setting isActive=true, all other cycles are set to isActive=false first.
+    // ─────────────────────────────────────────────────────────────────────────
+    public AppraisalCycleDTO toggleCycleField(Long cycleId, String field, boolean value) {
+        AppraisalCycle cycle = cycleRepo.findById(cycleId)
+                .orElseThrow(() -> new EntityNotFoundException("Cycle not found: " + cycleId));
+
+        if ("isActive".equalsIgnoreCase(field)) {
+            if (value) {
+                // Deactivate all others first
+                cycleRepo.findAll().forEach(c -> {
+                    if (!c.getId().equals(cycleId) && c.isActive()) {
+                        c.setActive(false);
+                        cycleRepo.save(c);
+                    }
+                });
+            }
+            cycle.setActive(value);
+        } else if ("isOpen".equalsIgnoreCase(field)) {
+            cycle.setOpen(value);
+        } else {
+            throw new IllegalArgumentException("Unknown field: " + field + ". Use 'isActive' or 'isOpen'.");
+        }
+
+        AppraisalCycle saved = cycleRepo.save(cycle);
+
+        AppraisalCycleDTO dto = new AppraisalCycleDTO();
+        dto.setId(saved.getId());
+        dto.setCycleLabel(saved.getCycleLabel());
+        dto.setStartYear(saved.getStartYear());
+        dto.setEndYear(saved.getEndYear());
+        dto.setActive(saved.isActive());
+        dto.setOpen(saved.isOpen());
+        return dto;
     }
 
     // ── Questions ─────────────────────────────────────────────────────────────
@@ -243,16 +281,20 @@ public class AppraisalService {
     }
 
     // ── Pending L1 ────────────────────────────────────────────────────────────
+    // FIX: Include UNDER_REVIEW — this status is set when L1 opens a SUBMITTED form.
+    // Without it, the record disappears from L1's Pending tab the moment they open it.
     public List<EmployeeAppraisalSummaryDTO> getPendingForL1(String approverId) {
         return appraisalRepo.findByFirstApproverIdAndStatusIn(approverId,
-                        Arrays.asList(AppraisalStatus.SUBMITTED, AppraisalStatus.L2_REJECTED))
+                        Arrays.asList(AppraisalStatus.SUBMITTED, AppraisalStatus.UNDER_REVIEW, AppraisalStatus.L2_REJECTED))
                 .stream().map(this::buildSummary).collect(Collectors.toList());
     }
 
     // ── Pending L2 ────────────────────────────────────────────────────────────
     public List<EmployeeAppraisalSummaryDTO> getPendingForL2(String approverId) {
         return appraisalRepo.findByFinalApproverIdAndStatusIn(approverId,
-                        Arrays.asList(AppraisalStatus.L1_APPROVED, AppraisalStatus.FINAL_REVIEW))
+                        Arrays.asList(AppraisalStatus.L1_APPROVED,
+                                AppraisalStatus.L2_UNDER_REVIEW,
+                                AppraisalStatus.FINAL_REVIEW))
                 .stream().map(this::buildSummary).collect(Collectors.toList());
     }
 
@@ -263,11 +305,93 @@ public class AppraisalService {
         return combined;
     }
 
+    /**
+     * FIX: Returns ALL records where this user is L2 (finalApproverId), regardless of status.
+     * This allows the dashboard to show VIEW_ONLY records for L2 (e.g. SUBMITTED — L1 is still working).
+     * Frontend resolveApproverLevel() then sorts them into PENDING vs VIEW_ONLY tabs correctly.
+     */
+    public List<EmployeeAppraisalSummaryDTO> getAllForL2Approver(String approverId) {
+        // Exclude records the L2 should never see
+        List<AppraisalStatus> excludeDraftAndRejected = Arrays.asList(
+                AppraisalStatus.DRAFT,
+                AppraisalStatus.L1_REJECTED
+        );
+        return appraisalRepo
+                .findByFinalApproverIdAndStatusNotIn(approverId, excludeDraftAndRejected)
+                .stream().map(this::buildSummary).collect(Collectors.toList());
+    }
+
+    /**
+     * FIX: Returns ALL records where this user is L1 (firstApproverId), regardless of status.
+     * This ensures VIEW_ONLY tab shows records L1 has already submitted (e.g. L1_APPROVED,
+     * FINAL_REVIEW, PUBLISHED) — not just the ones still pending action.
+     */
+    public List<EmployeeAppraisalSummaryDTO> getAllForL1Approver(String approverId) {
+        // Exclude records L1 should never see (not yet submitted by employee, or L1-rejected)
+        List<AppraisalStatus> excludeStatuses = Arrays.asList(
+                AppraisalStatus.DRAFT,
+                AppraisalStatus.L1_REJECTED
+        );
+        return appraisalRepo
+                .findByFirstApproverIdAndStatusNotIn(approverId, excludeStatuses)
+                .stream().map(this::buildSummary).collect(Collectors.toList());
+    }
+
+    /**
+     * FIX: Combined view for a manager who may be both L1 and L2 for different employees.
+     * Returns ALL L1 records (pending + already actioned) + all L2 records.
+     * Frontend resolveApproverLevel() + resolveTab() bucket them into PENDING / VIEW_ONLY / PUBLISHED.
+     */
+    public List<EmployeeAppraisalSummaryDTO> getAllForApprover(String approverId) {
+        // Use a map to avoid duplicates (same record could appear as both L1 and L2)
+        Map<Long, EmployeeAppraisalSummaryDTO> byId = new LinkedHashMap<>();
+        getAllForL1Approver(approverId).forEach(dto -> byId.put(dto.getAppraisalId(), dto));
+        getAllForL2Approver(approverId).forEach(dto -> byId.putIfAbsent(dto.getAppraisalId(), dto));
+        return new ArrayList<>(byId.values());
+    }
+
     // ── Approver detail ───────────────────────────────────────────────────────
     public AppraisalDetailDTO getForApprover(Long appraisalId) {
         SelfAppraisal a = appraisalRepo.findById(appraisalId)
                 .orElseThrow(() -> new EntityNotFoundException("Appraisal not found"));
         return buildDetailDTO(a, true);
+    }
+
+    // ── Mark Under Review ─────────────────────────────────────────────────────
+    // Called when L1 opens a SUBMITTED appraisal for review.
+    // Status: SUBMITTED → UNDER_REVIEW  (so dashboard can show "reviewing in progress")
+    public void markUnderReview(Long appraisalId, String approverId) {
+        SelfAppraisal appraisal = appraisalRepo.findById(appraisalId)
+                .orElseThrow(() -> new EntityNotFoundException("Appraisal not found: " + appraisalId));
+
+        // Only transition from SUBMITTED; ignore if already further along
+        if (appraisal.getStatus() == AppraisalStatus.SUBMITTED) {
+            String prev = appraisal.getStatus().name();
+            appraisal.setStatus(AppraisalStatus.UNDER_REVIEW);
+            appraisalRepo.save(appraisal);
+            recordHistory(appraisal, prev, AppraisalStatus.UNDER_REVIEW.name(),
+                    approverId, resolveEmployeeName(approverId),
+                    AppraisalStatusHistory.ActionType.L1_APPROVED, // reuse closest action type
+                    "Opened for review by L1");
+        }
+    }
+
+    // ── Mark L2 Under Review ─────────────────────────────────────────────────
+    // Called when L2 clicks "Start Review" on a VIEW_ONLY record.
+    // Status: L1_APPROVED → L2_UNDER_REVIEW  (moves record to L2 Pending tab)
+    public void markL2UnderReview(Long appraisalId, String approverId) {
+        SelfAppraisal appraisal = appraisalRepo.findById(appraisalId)
+                .orElseThrow(() -> new EntityNotFoundException("Appraisal not found: " + appraisalId));
+
+        if (appraisal.getStatus() == AppraisalStatus.L1_APPROVED) {
+            String prev = appraisal.getStatus().name();
+            appraisal.setStatus(AppraisalStatus.L2_UNDER_REVIEW);
+            appraisalRepo.save(appraisal);
+            recordHistory(appraisal, prev, AppraisalStatus.L2_UNDER_REVIEW.name(),
+                    approverId, resolveEmployeeName(approverId),
+                    AppraisalStatusHistory.ActionType.L2_APPROVED,
+                    "Opened for review by L2");
+        }
     }
 
     // ── Add remarks / decision ────────────────────────────────────────────────
@@ -288,7 +412,8 @@ public class AppraisalService {
 
         List<SelfAppraisalAnswer> answers = answerRepo.findByAppraisal_Id(appraisalId);
         Map<Long, SelfAppraisalAnswer> answerByQuestionId = answers.stream()
-                .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+                .filter(a -> a.getQuestion() != null)
+                .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a, (a, b) -> b));
 
         if (req.getQuestionRemarks() != null) {
             for (RemarkRequest.QuestionRemarkDTO qr : req.getQuestionRemarks()) {
@@ -502,11 +627,20 @@ public class AppraisalService {
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L2 && r.getQuestion() == null)
                         .map(AppraisalRemark::getRevisedRating).findFirst().orElse(null);
 
+                // FIX: build per-question remark lookup maps (were missing from original)
+                Map<Long, AppraisalRemark> l1Map = allRemarks.stream()
+                        .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() != null)
+                        .collect(Collectors.toMap(r -> r.getQuestion().getId(), r -> r, (a, b) -> b));
+                Map<Long, AppraisalRemark> l2Map = allRemarks.stream()
+                        .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L2 && r.getQuestion() != null)
+                        .collect(Collectors.toMap(r -> r.getQuestion().getId(), r -> r, (a, b) -> b));
+
                 List<AppraisalQuestion> questions = sortedBySection(questionRepo
                         .findByCycle_IdAndIsDeletedFalseOrderBySortOrderAsc(appraisal.getCycle().getId()));
                 List<SelfAppraisalAnswer> answers = answerRepo.findByAppraisal_Id(appraisal.getId());
                 Map<Long, SelfAppraisalAnswer> ansMap = answers.stream()
-                        .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+                        .filter(a -> a.getQuestion() != null)
+                        .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a, (a, b) -> b));
 
                 List<Integer> ratedRatings = answers.stream()
                         .filter(a -> a.getSelfRating() != null)
@@ -515,60 +649,93 @@ public class AppraisalService {
                         .collect(Collectors.toList());
                 double overallAvg = ratedRatings.isEmpty() ? 0.0
                         : ratedRatings.stream().mapToInt(i -> i).average().orElse(0.0);
+                String overallAvgStr = overallAvg > 0
+                        ? String.valueOf(Math.round(overallAvg * 100.0) / 100.0) : "";
 
+                // FIX: write one row per question (original had broken loop referencing undefined vars)
                 for (AppraisalQuestion q : questions) {
                     SelfAppraisalAnswer ans = ansMap.get(q.getId());
+                    AppraisalRemark l1r     = l1Map.get(q.getId());
+                    AppraisalRemark l2r     = l2Map.get(q.getId());
+                    boolean isSuggestion    = SUGGESTION_SECTION.equalsIgnoreCase(q.getSection());
+
                     Row row = sheet.createRow(rowNum++);
-                    int col = 0;
 
-                    row.createCell(col++).setCellValue(appraisal.getEmployeeId());
-                    row.createCell(col++).setCellValue(empName);
-                    row.createCell(col++).setCellValue(dept);
-                    row.createCell(col++).setCellValue(role);
-                    row.createCell(col++).setCellValue(expType);
-                    row.createCell(col++).setCellValue(companyExp);
-
-                    row.createCell(col++).setCellValue(appraisal.getCycle().getCycleLabel());
-                    row.createCell(col++).setCellValue(appraisal.getStatus().name());
-                    row.createCell(col++).setCellValue(
+                    row.createCell(0).setCellValue(appraisal.getEmployeeId());
+                    row.createCell(1).setCellValue(empName);
+                    row.createCell(2).setCellValue(dept);
+                    row.createCell(3).setCellValue(role);
+                    row.createCell(4).setCellValue(expType);
+                    row.createCell(5).setCellValue(companyExp);
+                    row.createCell(6).setCellValue(appraisal.getCycle().getCycleLabel());
+                    row.createCell(7).setCellValue(appraisal.getStatus().name());
+                    row.createCell(8).setCellValue(
                             appraisal.getSubmittedAt() != null ? appraisal.getSubmittedAt().format(dtf) : "");
-
-                    row.createCell(col++).setCellValue(nvl(appraisal.getFirstApproverId()));
-                    row.createCell(col++).setCellValue(nvl(l1Name));
-                    row.createCell(col++).setCellValue(
+                    row.createCell(9).setCellValue(nvl(appraisal.getFirstApproverId()));
+                    row.createCell(10).setCellValue(nvl(l1Name));
+                    row.createCell(11).setCellValue(
                             appraisal.getL1ReviewedAt() != null ? appraisal.getL1ReviewedAt().format(dtf) : "");
-                    row.createCell(col++).setCellValue(nvl(l1OverallRemark));
-                    if (l1OverallRating != null) row.createCell(col++).setCellValue(l1OverallRating);
-                    else row.createCell(col++).setCellValue("");
-
-                    row.createCell(col++).setCellValue(nvl(appraisal.getFinalApproverId()));
-                    row.createCell(col++).setCellValue(nvl(l2Name));
-                    row.createCell(col++).setCellValue(
+                    row.createCell(12).setCellValue(l1OverallRemark);
+                    if (l1OverallRating != null) row.createCell(13).setCellValue(l1OverallRating);
+                    row.createCell(14).setCellValue(nvl(appraisal.getFinalApproverId()));
+                    row.createCell(15).setCellValue(nvl(l2Name));
+                    row.createCell(16).setCellValue(
                             appraisal.getPublishedAt() != null ? appraisal.getPublishedAt().format(dtf) : "");
-                    row.createCell(col++).setCellValue(nvl(l2OverallRemark));
-                    if (l2OverallRating != null) row.createCell(col++).setCellValue(l2OverallRating);
-                    else row.createCell(col++).setCellValue("");
+                    row.createCell(17).setCellValue(l2OverallRemark);
+                    if (l2OverallRating != null) row.createCell(18).setCellValue(l2OverallRating);
 
-                    boolean isSuggestion = SUGGESTION_SECTION.equalsIgnoreCase(q.getSection());
-                    row.createCell(col++).setCellValue(q.getSection());
-                    row.createCell(col++).setCellValue(q.getQuestionText());
-                    row.createCell(col++).setCellValue(ans != null ? nvl(ans.getAnswerText()) : "");
+                    row.createCell(19).setCellValue(q.getSection());
+                    row.createCell(20).setCellValue(q.getQuestionText());
+
+                    // Self answer — append project list for project question
+                    String selfAnswer = (ans != null && ans.getAnswerText() != null) ? ans.getAnswerText() : "";
+                    if (q.getQuestionText() != null && q.getQuestionText().toLowerCase().contains("project")) {
+                        List<AppraisalProject> projs =
+                                projectRepo.findByAppraisal_IdAndQuestion_Id(appraisal.getId(), q.getId());
+                        if (!projs.isEmpty()) {
+                            StringBuilder sb = new StringBuilder(selfAnswer.isEmpty() ? "" : selfAnswer + "\n\n");
+                            sb.append("Projects:\n");
+                            for (int pi = 0; pi < projs.size(); pi++) {
+                                sb.append(String.format("%02d. %s\n    %s\n",
+                                        pi + 1, projs.get(pi).getProjectName(),
+                                        projs.get(pi).getDescription() != null
+                                                ? projs.get(pi).getDescription() : ""));
+                            }
+                            selfAnswer = sb.toString().trim();
+                        }
+                    }
+                    row.createCell(21).setCellValue(selfAnswer);
+
                     if (!isSuggestion && ans != null && ans.getSelfRating() != null)
-                        row.createCell(col++).setCellValue(ans.getSelfRating());
-                    else row.createCell(col++).setCellValue("");
+                        row.createCell(22).setCellValue(ans.getSelfRating());
 
-                    if (!isSuggestion && ans != null && ans.getRevisedRating() != null)
-                        row.createCell(col++).setCellValue(ans.getRevisedRating());
-                    else row.createCell(col++).setCellValue("");
-                    row.createCell(col++).setCellValue(ans != null ? nvl(ans.getRevisedRemarks()) : "");
+                    // L1 revised rating — answer field first, fallback to remark table
+                    Integer l1Rating = (ans != null && ans.getRevisedRating() != null)
+                            ? ans.getRevisedRating()
+                            : (l1r != null ? l1r.getRevisedRating() : null);
+                    if (!isSuggestion && l1Rating != null)
+                        row.createCell(23).setCellValue(l1Rating);
 
-                    if (!isSuggestion && ans != null && ans.getFinalRating() != null)
-                        row.createCell(col++).setCellValue(ans.getFinalRating());
-                    else row.createCell(col++).setCellValue("");
-                    row.createCell(col++).setCellValue(ans != null ? nvl(ans.getFinalRemarks()) : "");
+                    String l1RemarkText = (ans != null && ans.getRevisedRemarks() != null)
+                            ? ans.getRevisedRemarks()
+                            : (l1r != null ? l1r.getRemarkText() : null);
+                    if (l1RemarkText != null)
+                        row.createCell(24).setCellValue(l1RemarkText);
 
-                    if (overallAvg > 0)
-                        row.createCell(col).setCellValue(Math.round(overallAvg * 100.0) / 100.0);
+                    // L2 final rating — answer field first, fallback to remark table
+                    Integer l2Rating = (ans != null && ans.getFinalRating() != null)
+                            ? ans.getFinalRating()
+                            : (l2r != null ? l2r.getRevisedRating() : null);
+                    if (!isSuggestion && l2Rating != null)
+                        row.createCell(25).setCellValue(l2Rating);
+
+                    String l2RemarkText = (ans != null && ans.getFinalRemarks() != null)
+                            ? ans.getFinalRemarks()
+                            : (l2r != null ? l2r.getRemarkText() : null);
+                    if (l2RemarkText != null)
+                        row.createCell(26).setCellValue(l2RemarkText);
+
+                    row.createCell(27).setCellValue(overallAvgStr);
                 }
             }
 
@@ -654,7 +821,8 @@ public class AppraisalService {
                         .findByCycle_IdAndIsDeletedFalseOrderBySortOrderAsc(appraisal.getCycle().getId()));
                 List<SelfAppraisalAnswer> answers   = answerRepo.findByAppraisal_Id(appraisal.getId());
                 Map<Long, SelfAppraisalAnswer> ansMap = answers.stream()
-                        .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+                        .filter(a -> a.getQuestion() != null)
+                        .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a, (a, b) -> b));
 
                 List<Integer> ratedRatings = answers.stream()
                         .filter(a -> a.getSelfRating() != null)
@@ -736,7 +904,6 @@ public class AppraisalService {
                 }
 
                 // ── Column Header Row for Questions ──────────────────────────
-                // Columns: #  | Question | Self Answer | Self Rating | L1 Remark | L1 Rating | L2 Remark | L2 Rating
                 PdfPTable colHeaderTable = new PdfPTable(new float[]{3f, 22f, 14f, 6f, 14f, 6f, 14f, 6f});
                 colHeaderTable.setWidthPercentage(100);
                 colHeaderTable.setSpacingAfter(2);
@@ -831,7 +998,7 @@ public class AppraisalService {
                         // Self answer
                         String selfAnswer = (ans != null && ans.getAnswerText() != null) ? ans.getAnswerText() : "—";
 
-                        // ── Append project list for Q06 (project question) ──
+                        // Append project list for project question
                         if (q.getQuestionText() != null && q.getQuestionText().toLowerCase().contains("project")) {
                             List<AppraisalProject> projs = projectRepo.findByAppraisal_IdAndQuestion_Id(appraisal.getId(), q.getId());
                             if (!projs.isEmpty()) {
@@ -921,7 +1088,6 @@ public class AppraisalService {
                 .findByEmployeeIdAndCycle_Id(employeeId, cycleId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Appraisal not found"));
 
-        // FIX: enum comparison instead of string comparison
         if (appraisal.getStatus() != AppraisalStatus.PUBLISHED
                 && appraisal.getStatus() != AppraisalStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Appraisal is not yet published");
@@ -1078,7 +1244,8 @@ public class AppraisalService {
             List<AppraisalQuestion> questions = sortedBySection(questionRepo
                     .findByCycle_IdAndIsDeletedFalseOrderBySortOrderAsc(appraisal.getCycle().getId()));
             Map<Long, SelfAppraisalAnswer> ansMap = answers.stream()
-                    .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+                    .filter(a -> a.getQuestion() != null)
+                    .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a, (a, b) -> b));
 
             String currentSection = null;
             int qNum = 1;
@@ -1146,7 +1313,7 @@ public class AppraisalService {
 
                     String selfAnswer = (ans != null && ans.getAnswerText() != null) ? ans.getAnswerText() : "—";
 
-                    // ── Append project list for Q06 (project question) ──
+                    // Append project list for project question
                     if (q.getQuestionText() != null && q.getQuestionText().toLowerCase().contains("project")) {
                         List<AppraisalProject> projs = projectRepo.findByAppraisal_IdAndQuestion_Id(appraisal.getId(), q.getId());
                         if (!projs.isEmpty()) {
@@ -1228,7 +1395,6 @@ public class AppraisalService {
                 .findByEmployeeIdAndCycle_Id(employeeId, cycleId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Appraisal not found"));
 
-        // FIX: enum comparison instead of string comparison
         if (appraisal.getStatus() != AppraisalStatus.PUBLISHED
                 && appraisal.getStatus() != AppraisalStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Appraisal is not yet published");
@@ -1285,7 +1451,8 @@ public class AppraisalService {
                     .findByCycle_IdAndIsDeletedFalseOrderBySortOrderAsc(appraisal.getCycle().getId()));
             List<SelfAppraisalAnswer> answers = answerRepo.findByAppraisal_Id(appraisal.getId());
             Map<Long, SelfAppraisalAnswer> ansMap = answers.stream()
-                    .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+                    .filter(a -> a.getQuestion() != null)
+                    .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a, (a, b) -> b));
 
             int rowNum = 1;
             for (AppraisalQuestion q : questions) {
@@ -1393,6 +1560,9 @@ public class AppraisalService {
         dto.setStatus(a.getStatus());
         dto.setSubmittedAt(a.getSubmittedAt());
         dto.setPublishedAt(a.getPublishedAt());
+        // FIX: Pass approver IDs so frontend can compute per-record tab placement
+        dto.setFirstApproverId(a.getFirstApproverId());
+        dto.setFinalApproverId(a.getFinalApproverId());
         return dto;
     }
 
@@ -1418,7 +1588,8 @@ public class AppraisalService {
                 : Collections.emptyList();
 
         Map<Long, SelfAppraisalAnswer> ansMap = answers.stream()
-                .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a));
+                .filter(a -> a.getQuestion() != null)
+                .collect(Collectors.toMap(a -> a.getQuestion().getId(), a -> a, (a, b) -> b));
         Map<Long, AppraisalRemark> l1Map = remarks.stream()
                 .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() != null)
                 .collect(Collectors.toMap(r -> r.getQuestion().getId(), r -> r, (a, b) -> b));
@@ -1434,6 +1605,8 @@ public class AppraisalService {
                 .map(AppraisalRemark::getRemarkText).findFirst().orElse(null);
 
         Map<String, List<AppraisalDetailDTO.QuestionAnswerDTO>> bySection = new LinkedHashMap<>();
+
+        // PATCH: buildDetailDTO loop — includes project lookup for "project" question
         for (AppraisalQuestion q : questions) {
             SelfAppraisalAnswer ans = ansMap.get(q.getId());
             AppraisalRemark l1r    = l1Map.get(q.getId());
@@ -1455,6 +1628,19 @@ public class AppraisalService {
             qa.setL1RevisedRating(!isSuggestion && l1r != null ? l1r.getRevisedRating() : null);
             qa.setL2Remark(l2r != null ? l2r.getRemarkText() : null);
             qa.setL2RevisedRating(!isSuggestion && l2r != null ? l2r.getRevisedRating() : null);
+
+            // NEW: populate projects for the "project" question
+            if (q.getQuestionText() != null && q.getQuestionText().toLowerCase().contains("project")) {
+                List<AppraisalProject> projs =
+                        projectRepo.findByAppraisal_IdAndQuestion_Id(appraisal.getId(), q.getId());
+                if (!projs.isEmpty()) {
+                    List<AppraisalDetailDTO.ProjectItem> items = projs.stream()
+                            .map(p -> new AppraisalDetailDTO.ProjectItem(
+                                    p.getId(), p.getProjectName(), p.getDescription()))
+                            .collect(Collectors.toList());
+                    qa.setProjects(items);
+                }
+            }
 
             bySection.computeIfAbsent(q.getSection(), k -> new ArrayList<>()).add(qa);
         }
@@ -1544,13 +1730,8 @@ public class AppraisalService {
                         .thenComparingInt(q -> q.getSortOrder()))
                 .collect(Collectors.toList());
     }
+
     // ── Status filter helper for export ──────────────────────────────────────
-    /**
-     * Filters appraisals by statusFilter string:
-     *   "PUBLISHED" → only PUBLISHED / CLOSED
-     *   "PENDING"   → everything except PUBLISHED / CLOSED
-     *   "ALL" / null / blank → no filter
-     */
     private List<SelfAppraisal> filterByStatus(List<SelfAppraisal> appraisals, String statusFilter) {
         if (statusFilter == null || statusFilter.isBlank() || "ALL".equalsIgnoreCase(statusFilter)) {
             return appraisals;
@@ -1577,5 +1758,4 @@ public class AppraisalService {
             return appraisals; // unknown filter → return all
         }
     }
-
 }
