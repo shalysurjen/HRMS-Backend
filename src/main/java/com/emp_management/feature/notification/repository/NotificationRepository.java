@@ -1,6 +1,7 @@
 package com.emp_management.feature.notification.repository;
 
 import com.emp_management.feature.notification.entity.Notification;
+import com.emp_management.shared.enums.Channel;
 import com.emp_management.shared.enums.NotificationStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -12,14 +13,15 @@ import java.util.List;
 @Repository
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
 
+    // FIX: filter by channel so EMAIL rows never appear in the bell/notification page
+    Page<Notification> findByUserIdAndChannelOrderByCreatedAtDesc(
+            String userId, Channel channel, Pageable pageable);
 
-    // Get notifications with pagination
-    Page<Notification> findByUserIdOrderByCreatedAtDesc(String userId, Pageable pageable);
+    // FIX: unread count only for IN_APP channel
+    Long countByUserIdAndNotificationStatusAndChannel(
+            String userId, NotificationStatus status, Channel channel);
 
-
-    // Count unread notifications
-    Long countByUserIdAndNotificationStatus(String userId, NotificationStatus status);
-
-    // Get notifications by status (for bulk operations)
-    List<Notification> findByUserIdAndNotificationStatus(String userId, NotificationStatus status);
+    // FIX: bulk status ops scoped to IN_APP only
+    List<Notification> findByUserIdAndNotificationStatusAndChannel(
+            String userId, NotificationStatus status, Channel channel);
 }

@@ -353,12 +353,17 @@ public class LeaveApprovalService {
                     .map(Employee::getName).orElse("Employee");
             String dateRange = DateUtils.formatLeaveDateRange(leave.getStartDate(), leave.getEndDate());
             String preposition = getPreposition(leave.getStartDate(), leave.getEndDate());
+            String msg = String.format("%s's %s leave %s %s approved at level 1. Requires your final approval.",
+                    empName, leave.getLeaveType().getLeaveType(), preposition, dateRange);
 
+            // EMAIL notification
             notificationService.createNotification(
                     mgr.getEmpId(), firstApprover.getEmail(), mgr.getEmail(),
-                    EventType.LEAVE_APPLIED, Channel.EMAIL,
-                    String.format("%s's %s leave %s %s approved at level 1. Requires your final approval.",
-                            empName, leave.getLeaveType().getLeaveType(), preposition, dateRange));
+                    EventType.LEAVE_APPLIED, Channel.EMAIL, msg);
+            // IN_APP notification (bell icon)
+            notificationService.createNotification(
+                    mgr.getEmpId(), firstApprover.getEmail(), mgr.getEmail(),
+                    EventType.LEAVE_APPLIED, Channel.IN_APP, msg);
         });
     }
 
@@ -377,13 +382,19 @@ public class LeaveApprovalService {
                 default -> String.format("A meeting is required regarding your leave %s %s.",
                         preposition, dateRange);
             };
+            EventType evtType = switch (decision) {
+                case APPROVED -> EventType.LEAVE_APPROVED;
+                case REJECTED -> EventType.LEAVE_REJECTED;
+                default -> EventType.LEAVE_IN_PROGRESS;
+            };
+            // EMAIL notification
             notificationService.createNotification(
                     emp.getEmpId(), approver.getEmail(), emp.getEmail(),
-                    switch (decision) {
-                        case APPROVED -> EventType.LEAVE_APPROVED;
-                        case REJECTED -> EventType.LEAVE_REJECTED;
-                        default -> EventType.LEAVE_IN_PROGRESS;
-                    }, Channel.EMAIL, context);
+                    evtType, Channel.EMAIL, context);
+            // IN_APP notification (bell icon)
+            notificationService.createNotification(
+                    emp.getEmpId(), approver.getEmail(), emp.getEmail(),
+                    evtType, Channel.IN_APP, context);
         });
     }
 
@@ -391,12 +402,17 @@ public class LeaveApprovalService {
         String dateRange = DateUtils.formatLeaveDateRange(leave.getStartDate(), leave.getEndDate());
         String preposition = getPreposition(leave.getStartDate(), leave.getEndDate());
 
-        employeeRepository.findByEmpId(leave.getEmployee().getEmpId()).ifPresent(emp ->
-                notificationService.createNotification(
-                        emp.getEmpId(), approver.getEmail(), emp.getEmail(),
-                        EventType.LEAVE_IN_PROGRESS, Channel.EMAIL,
-                        String.format("%s (Leave %s %s)", message, preposition, dateRange))
-        );
+        employeeRepository.findByEmpId(leave.getEmployee().getEmpId()).ifPresent(emp -> {
+            String progressMsg = String.format("%s (Leave %s %s)", message, preposition, dateRange);
+            // EMAIL notification
+            notificationService.createNotification(
+                    emp.getEmpId(), approver.getEmail(), emp.getEmail(),
+                    EventType.LEAVE_IN_PROGRESS, Channel.EMAIL, progressMsg);
+            // IN_APP notification (bell icon)
+            notificationService.createNotification(
+                    emp.getEmpId(), approver.getEmail(), emp.getEmail(),
+                    EventType.LEAVE_IN_PROGRESS, Channel.IN_APP, progressMsg);
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -50,4 +50,22 @@ public interface WfhApplicationRepository extends JpaRepository<WfhApplication, 
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
             @Param("excludeId") Long excludeId);
+
+    @org.springframework.data.jpa.repository.Query("""
+        SELECT w FROM WfhApplication w
+        WHERE MONTH(w.createdAt) = :month
+          AND YEAR(w.createdAt)  = :year
+        ORDER BY w.createdAt ASC
+    """)
+    List<WfhApplication> findByCreatedAtMonthAndYear(
+            @org.springframework.data.repository.query.Param("month") int month,
+            @org.springframework.data.repository.query.Param("year") int year);
+
+    List<WfhApplication> findByStartDateBetweenOrderByStartDateAsc(
+            java.time.LocalDate from, java.time.LocalDate to);
+
+    List<WfhApplication> findByEmployee_EmpIdInAndStartDateBetweenOrderByStartDateAsc(
+            java.util.List<String> empIds,
+            java.time.LocalDate from,
+            java.time.LocalDate to);
 }

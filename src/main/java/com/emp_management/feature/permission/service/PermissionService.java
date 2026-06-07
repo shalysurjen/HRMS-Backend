@@ -517,12 +517,22 @@ public class PermissionService {
                             permission.getEndTime(),
                             formatDuration(permission.getDurationMinutes()));
 
+                    // EMAIL notification
                     notificationService.createNotification(
                             approver.getEmpId(),
                             employee.getEmail(),
                             approver.getEmail(),
                             EventType.PERMISSION_APPLIED,
                             Channel.EMAIL,
+                            subject,
+                            body);
+                    // IN_APP notification (bell icon)
+                    notificationService.createNotification(
+                            approver.getEmpId(),
+                            employee.getEmail(),
+                            approver.getEmail(),
+                            EventType.PERMISSION_APPLIED,
+                            Channel.IN_APP,
                             subject,
                             body);
                 });

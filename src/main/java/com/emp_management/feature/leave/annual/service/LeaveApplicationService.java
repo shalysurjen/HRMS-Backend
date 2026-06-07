@@ -54,6 +54,8 @@ public class LeaveApplicationService {
     private final SickLeaveBalanceService sickLeaveBalanceService;
     private final CarryForwardBalanceService carryForwardBalanceService;// ✅ NEW FIELD
     private final EmployeePersonalDetailsRepository personalDetailsRepository;
+    private final com.emp_management.feature.permission.repository.PermissionRepository permissionRepository;
+    private final com.emp_management.feature.wfh.repository.WfhApplicationRepository wfhApplicationRepository;
 //    private final SeparationService            separationService;
 
     public LeaveApplicationService(
@@ -69,7 +71,9 @@ public class LeaveApplicationService {
             SickLeaveBalanceService sickLeaveBalanceService,
             CarryForwardBalanceService carryForwardBalanceService,
             EmployeePersonalDetailsRepository personalDetailsRepository,
-            LeaveApprovalRepository leaveApprovalRepository
+            LeaveApprovalRepository leaveApprovalRepository,
+            com.emp_management.feature.permission.repository.PermissionRepository permissionRepository,
+            com.emp_management.feature.wfh.repository.WfhApplicationRepository wfhApplicationRepository
     ) {
 //            SeparationService separationService) {
         this.leaveApplicationRepository = leaveApplicationRepository;
@@ -85,6 +89,8 @@ public class LeaveApplicationService {
         this.carryForwardBalanceService = carryForwardBalanceService; // ✅ NEW ASSIGNMENT
         this.personalDetailsRepository = personalDetailsRepository;
         this.leaveApprovalRepository = leaveApprovalRepository;
+        this.permissionRepository = permissionRepository;
+        this.wfhApplicationRepository = wfhApplicationRepository;
 //        this.separationService           = separationService;
     }
 
@@ -593,5 +599,151 @@ public class LeaveApplicationService {
                 .stream()
                 .findFirst()
                 .orElse(null); // Handle cases where no admin is found
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  LEAVE EXPORT — Leave + WFH + Permission merged
+    // ════════════════════════════════════════════════════════════════
+
+    private static final java.time.format.DateTimeFormatter EXPORT_DATE_FMT =
+            java.time.format.DateTimeFormatter.ofPattern("d-MMM-yy");
+
+    public List<com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO> getLeaveExportAll(
+            java.time.LocalDate from, java.time.LocalDate to) {
+        List<com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO> rows = new java.util.ArrayList<>();
+        leaveApplicationRepository.findByStartDateBetweenOrCreatedAtBetween(from, to)
+                .stream().map(this::toExportRow).forEach(rows::add);
+        wfhApplicationRepository.findByStartDateBetweenOrderByStartDateAsc(from, to)
+                .stream().map(this::wfhToExportRow).forEach(rows::add);
+        permissionRepository.findByPermissionDateBetweenOrderByPermissionDateAsc(from, to)
+                .stream().map(this::permissionToExportRow).forEach(rows::add);
+        rows.sort(java.util.Comparator.comparing(
+                com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO::getApplicationCreatedDate,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        return rows;
+    }
+
+    public List<com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO> getLeaveExportForTeam(
+            List<String> empIds, java.time.LocalDate from, java.time.LocalDate to) {
+        List<com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO> rows = new java.util.ArrayList<>();
+        leaveApplicationRepository.findByEmployeeIdsAndDateRange(empIds, from, to)
+                .stream().map(this::toExportRow).forEach(rows::add);
+        wfhApplicationRepository.findByEmployee_EmpIdInAndStartDateBetweenOrderByStartDateAsc(empIds, from, to)
+                .stream().map(this::wfhToExportRow).forEach(rows::add);
+        permissionRepository.findByEmployee_EmpIdInAndPermissionDateBetweenOrderByPermissionDateAsc(empIds, from, to)
+                .stream().map(this::permissionToExportRow).forEach(rows::add);
+        rows.sort(java.util.Comparator.comparing(
+                com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO::getApplicationCreatedDate,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        return rows;
+    }
+
+    public java.io.ByteArrayInputStream exportLeaveToExcel(
+            List<com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO> rows) {
+        try (org.apache.poi.ss.usermodel.Workbook wb = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            org.apache.poi.ss.usermodel.Sheet sheet = wb.createSheet("Leave Export");
+            String[] cols = {
+                    "Application\nCreated Date","Employee ID","Employee Name","Leave Type",
+                    "Start Date","End Date","Start of\nthe Day","No.Of Days","Leave Year",
+                    "First Approver","First Approval\nDate","First Approval\nDecision",
+                    "Second Approver","Second Approval\nDate","Second Approval\nDecision"
+            };
+            org.apache.poi.ss.usermodel.CellStyle hStyle = wb.createCellStyle();
+            org.apache.poi.ss.usermodel.Font hFont = wb.createFont();
+            hFont.setBold(true); hFont.setColor(org.apache.poi.ss.usermodel.IndexedColors.WHITE.getIndex());
+            hStyle.setFont(hFont);
+            hStyle.setFillForegroundColor(org.apache.poi.ss.usermodel.IndexedColors.DARK_TEAL.getIndex());
+            hStyle.setFillPattern(org.apache.poi.ss.usermodel.FillPatternType.SOLID_FOREGROUND);
+            hStyle.setWrapText(true);
+            hStyle.setAlignment(org.apache.poi.ss.usermodel.HorizontalAlignment.CENTER);
+            org.apache.poi.ss.usermodel.Row hRow = sheet.createRow(0);
+            hRow.setHeightInPoints(36);
+            for (int i = 0; i < cols.length; i++) {
+                org.apache.poi.ss.usermodel.Cell c = hRow.createCell(i);
+                c.setCellValue(cols[i]); c.setCellStyle(hStyle);
+            }
+            int rowIdx = 1;
+            for (com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO row : rows) {
+                org.apache.poi.ss.usermodel.Row r = sheet.createRow(rowIdx++);
+                String[] vals = {
+                        row.getApplicationCreatedDate(), row.getEmployeeId(), row.getEmployeeName(),
+                        row.getLeaveType(), row.getStartDate(), row.getEndDate(),
+                        row.getStartOfTheDay(), row.getNoOfDays(), row.getLeaveYear(),
+                        row.getFirstApprover(), row.getFirstApprovalDate(), row.getFirstApprovalDecision(),
+                        row.getSecondApprover(), row.getSecondApprovalDate(), row.getSecondApprovalDecision()
+                };
+                for (int i = 0; i < vals.length; i++) r.createCell(i).setCellValue(vals[i] != null ? vals[i] : "");
+            }
+            for (int i = 0; i < cols.length; i++) sheet.autoSizeColumn(i);
+            sheet.createFreezePane(0, 1);
+            wb.write(out);
+            return new java.io.ByteArrayInputStream(out.toByteArray());
+        } catch (Exception e) { throw new RuntimeException("Leave export failed", e); }
+    }
+
+    private com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO toExportRow(LeaveApplication a) {
+        com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO r = new com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO();
+        r.setApplicationCreatedDate(a.getCreatedAt() != null ? a.getCreatedAt().toLocalDate().format(EXPORT_DATE_FMT) : "");
+        r.setEmployeeId(a.getEmployeeId());
+        r.setEmployeeName(a.getEmployeeName());
+        r.setLeaveType(a.getLeaveType() != null ? a.getLeaveType().getLeaveType() : "");
+        r.setStartDate(a.getStartDate() != null ? a.getStartDate().format(EXPORT_DATE_FMT) : "");
+        r.setEndDate(a.getEndDate() != null ? a.getEndDate().format(EXPORT_DATE_FMT) : "");
+        r.setStartOfTheDay(a.getStartDateHalfDayType() != null ? a.getStartDateHalfDayType().name() : "NULL");
+        r.setNoOfDays(a.getDays() != null ? a.getDays().stripTrailingZeros().toPlainString() : "0");
+        r.setLeaveYear(a.getYear() != null ? String.valueOf(a.getYear()) : "");
+        r.setFirstApprover(resolveApproverName(a.getFirstApproverId()));
+        r.setFirstApprovalDate(a.getFirstApproverDecidedAt() != null ? a.getFirstApproverDecidedAt().toLocalDate().format(EXPORT_DATE_FMT) : "NULL");
+        r.setFirstApprovalDecision(a.getFirstApproverDecision() != null ? a.getFirstApproverDecision().name() : "NULL");
+        r.setSecondApprover(resolveApproverName(a.getSecondApproverId()));
+        r.setSecondApprovalDate(a.getSecondApproverDecidedAt() != null ? a.getSecondApproverDecidedAt().toLocalDate().format(EXPORT_DATE_FMT) : "NULL");
+        r.setSecondApprovalDecision(a.getSecondApproverDecision() != null ? a.getSecondApproverDecision().name() : (a.getSecondApproverId() != null ? "PENDING" : "N/A"));
+        return r;
+    }
+
+    private com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO wfhToExportRow(com.emp_management.feature.wfh.entity.WfhApplication w) {
+        com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO r = new com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO();
+        r.setApplicationCreatedDate(w.getCreatedAt() != null ? w.getCreatedAt().toLocalDate().format(EXPORT_DATE_FMT) : "");
+        r.setEmployeeId(w.getEmployeeId()); r.setEmployeeName(w.getEmployeeName());
+        r.setLeaveType("WFH");
+        r.setStartDate(w.getStartDate() != null ? w.getStartDate().format(EXPORT_DATE_FMT) : "");
+        r.setEndDate(w.getEndDate() != null ? w.getEndDate().format(EXPORT_DATE_FMT) : "");
+        r.setStartOfTheDay(w.getStartDateHalfDayType() != null ? w.getStartDateHalfDayType().name() : "NULL");
+        r.setNoOfDays(w.getTotalDays() != null ? w.getTotalDays().stripTrailingZeros().toPlainString() : "0");
+        r.setLeaveYear(w.getStartDate() != null ? String.valueOf(w.getStartDate().getYear()) : "");
+        r.setFirstApprover(resolveApproverName(w.getFirstApproverId()));
+        r.setFirstApprovalDate(w.getFirstApproverDecidedAt() != null ? w.getFirstApproverDecidedAt().toLocalDate().format(EXPORT_DATE_FMT) : "NULL");
+        r.setFirstApprovalDecision(w.getFirstApproverDecision() != null ? w.getFirstApproverDecision().name() : "NULL");
+        r.setSecondApprover(resolveApproverName(w.getSecondApproverId()));
+        r.setSecondApprovalDate(w.getSecondApproverDecidedAt() != null ? w.getSecondApproverDecidedAt().toLocalDate().format(EXPORT_DATE_FMT) : "NULL");
+        r.setSecondApprovalDecision(w.getSecondApproverDecision() != null ? w.getSecondApproverDecision().name() : (w.getSecondApproverId() != null ? "PENDING" : "N/A"));
+        return r;
+    }
+
+    private com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO permissionToExportRow(com.emp_management.feature.permission.entity.Permission p) {
+        com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO r = new com.emp_management.feature.leave.annual.dto.LeaveExportRowDTO();
+        r.setApplicationCreatedDate(p.getCreatedAt() != null ? p.getCreatedAt().toLocalDate().format(EXPORT_DATE_FMT) : "");
+        r.setEmployeeId(p.getEmployeeId()); r.setEmployeeName(p.getEmployeeName());
+        r.setLeaveType("PERMISSION");
+        String pDate = p.getPermissionDate() != null ? p.getPermissionDate().format(EXPORT_DATE_FMT) : "";
+        r.setStartDate(pDate); r.setEndDate(pDate);
+        String st = p.getStartTime() != null ? p.getStartTime().toString().substring(0, 5) : "";
+        String et = p.getEndTime() != null ? p.getEndTime().toString().substring(0, 5) : "";
+        r.setStartOfTheDay(st.isEmpty() ? "NULL" : st + " - " + et);
+        r.setNoOfDays(p.getDurationMinutes() != null ? p.getDurationMinutes() + " min" : "NULL");
+        r.setLeaveYear(p.getPermissionDate() != null ? String.valueOf(p.getPermissionDate().getYear()) : "");
+        r.setFirstApprover(resolveApproverName(p.getFirstApproverId()));
+        r.setFirstApprovalDate(p.getFirstApproverDecidedAt() != null ? p.getFirstApproverDecidedAt().toLocalDate().format(EXPORT_DATE_FMT) : "NULL");
+        r.setFirstApprovalDecision(p.getFirstApproverDecision() != null ? p.getFirstApproverDecision().name() : "NULL");
+        r.setSecondApprover(resolveApproverName(p.getSecondApproverId()));
+        r.setSecondApprovalDate(p.getSecondApproverDecidedAt() != null ? p.getSecondApproverDecidedAt().toLocalDate().format(EXPORT_DATE_FMT) : "NULL");
+        r.setSecondApprovalDecision(p.getSecondApproverDecision() != null ? p.getSecondApproverDecision().name() : (p.getSecondApproverId() != null ? "PENDING" : "N/A"));
+        return r;
+    }
+
+    private String resolveApproverName(String empId) {
+        if (empId == null || empId.isBlank()) return "";
+        return employeeRepository.findByEmpId(empId).map(Employee::getName).orElse(empId);
     }
 }
