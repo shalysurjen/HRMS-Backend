@@ -65,9 +65,6 @@ public class NotificationService {
     }
 
     // ==================== NEW OVERLOAD — bypasses the builder, uses message directly ====================
-    // Use this when the caller has already built the full, formatted message body.
-    // VpnRequestService uses this so the email and in-app notification show the
-    // real content instead of the generic "You have a new notification." text.
 
     public Notification createNotification(String userId,
                                            String fromEmail,
@@ -98,17 +95,19 @@ public class NotificationService {
         return saved;
     }
 
-    // ==================== EXISTING METHODS (unchanged) ====================
+    // ==================== EXISTING METHODS (fixed to scope to IN_APP only) ====================
 
+    // FIX: only IN_APP rows are shown in the bell / notifications page
     public Page<NotificationResponse> getNotifications(String userId, Pageable pageable) {
         Page<Notification> notifications = notificationRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, pageable);
+                .findByUserIdAndChannelOrderByCreatedAtDesc(userId, Channel.IN_APP, pageable);
         return notifications.map(this::mapToResponse);
     }
 
+    // FIX: unread badge count only counts IN_APP rows
     public Long getUnreadCount(String userId) {
-        return notificationRepository.countByUserIdAndNotificationStatus(
-                userId, NotificationStatus.UNREAD);
+        return notificationRepository.countByUserIdAndNotificationStatusAndChannel(
+                userId, NotificationStatus.UNREAD, Channel.IN_APP);
     }
 
     @Transactional
@@ -120,10 +119,12 @@ public class NotificationService {
         notificationRepository.save(notification);
     }
 
+    // FIX: mark-all-read scoped to IN_APP rows only (EMAIL rows don't need a read state)
     @Transactional
     public void markAllAsRead(String userId) {
         List<Notification> unreadNotifications = notificationRepository
-                .findByUserIdAndNotificationStatus(userId, NotificationStatus.UNREAD);
+                .findByUserIdAndNotificationStatusAndChannel(
+                        userId, NotificationStatus.UNREAD, Channel.IN_APP);
         for (Notification notification : unreadNotifications) {
             notification.setNotificationStatus(NotificationStatus.READ);
         }
@@ -140,8 +141,10 @@ public class NotificationService {
 
     @Transactional
     public void clearReadNotifications(String userId) {
+        // FIX: scoped to IN_APP — EMAIL rows are not managed via the UI
         List<Notification> readNotifications = notificationRepository
-                .findByUserIdAndNotificationStatus(userId, NotificationStatus.UNREAD);
+                .findByUserIdAndNotificationStatusAndChannel(
+                        userId, NotificationStatus.READ, Channel.IN_APP);
         notificationRepository.deleteAll(readNotifications);
     }
 

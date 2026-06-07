@@ -16,4 +16,22 @@ public interface PermissionRepository extends JpaRepository<Permission, Long> {
 
     // Employee's own permission history
     List<Permission> findByEmployee_EmpIdOrderByCreatedAtDesc(String empId);
+
+    @org.springframework.data.jpa.repository.Query("""
+        SELECT p FROM Permission p
+        WHERE MONTH(p.createdAt) = :month
+          AND YEAR(p.createdAt)  = :year
+        ORDER BY p.createdAt ASC
+    """)
+    List<Permission> findByCreatedAtMonthAndYear(
+            @org.springframework.data.repository.query.Param("month") int month,
+            @org.springframework.data.repository.query.Param("year") int year);
+
+    List<Permission> findByPermissionDateBetweenOrderByPermissionDateAsc(
+            java.time.LocalDate from, java.time.LocalDate to);
+
+    List<Permission> findByEmployee_EmpIdInAndPermissionDateBetweenOrderByPermissionDateAsc(
+            java.util.List<String> empIds,
+            java.time.LocalDate from,
+            java.time.LocalDate to);
 }

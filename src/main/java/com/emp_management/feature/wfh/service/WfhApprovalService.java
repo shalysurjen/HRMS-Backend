@@ -28,8 +28,8 @@ public class WfhApprovalService {
     private final NotificationService notificationService;
 
     public WfhApprovalService(WfhApplicationRepository wfhRepository,
-                               EmployeeRepository employeeRepository,
-                               NotificationService notificationService) {
+                              EmployeeRepository employeeRepository,
+                              NotificationService notificationService) {
         this.wfhRepository     = wfhRepository;
         this.employeeRepository = employeeRepository;
         this.notificationService = notificationService;
@@ -112,7 +112,7 @@ public class WfhApprovalService {
     // ═══════════════════════════════════════════════════════════════
 
     private void finalizeWfh(WfhApplication wfh, RequestStatus status,
-                              Employee approver, String comments) {
+                             Employee approver, String comments) {
         wfh.setStatus(status);
         wfh.setCurrentApproverId(null);
         wfh.setCurrentApprovalLevel(null);
@@ -187,9 +187,14 @@ public class WfhApprovalService {
                     "%s's WFH from %s to %s has been approved at level 1 by %s. Awaiting your final approval.",
                     wfh.getEmployeeName(), wfh.getStartDate(), wfh.getEndDate(),
                     firstApprover.getName());
+            // EMAIL notification
             notificationService.createNotification(
                     secondApprover.getEmpId(), firstApprover.getEmail(), secondApprover.getEmail(),
                     EventType.LEAVE_APPLIED, Channel.EMAIL, subject, body);
+            // IN_APP notification (bell icon)
+            notificationService.createNotification(
+                    secondApprover.getEmpId(), firstApprover.getEmail(), secondApprover.getEmail(),
+                    EventType.LEAVE_APPLIED, Channel.IN_APP, subject, body);
         });
     }
 
@@ -203,18 +208,29 @@ public class WfhApprovalService {
                     wfh.getStartDate(), wfh.getEndDate(), verb.toLowerCase(),
                     approver.getName(),
                     status == RequestStatus.REJECTED ? " Reason: " + comments : "");
+            EventType wfhEvt = status == RequestStatus.APPROVED ? EventType.LEAVE_APPROVED : EventType.LEAVE_REJECTED;
+            // EMAIL notification
             notificationService.createNotification(
                     employee.getEmpId(), approver.getEmail(), employee.getEmail(),
-                    status == RequestStatus.APPROVED ? EventType.LEAVE_APPROVED : EventType.LEAVE_REJECTED,
-                    Channel.EMAIL, subject, body);
+                    wfhEvt, Channel.EMAIL, subject, body);
+            // IN_APP notification (bell icon)
+            notificationService.createNotification(
+                    employee.getEmpId(), approver.getEmail(), employee.getEmail(),
+                    wfhEvt, Channel.IN_APP, subject, body);
         });
     }
 
     private void notifyEmployeeProgress(WfhApplication wfh, String message) {
         employeeRepository.findByEmpId(wfh.getEmployeeId()).ifPresent(employee -> {
+            // EMAIL notification
             notificationService.createNotification(
                     employee.getEmpId(), null, employee.getEmail(),
                     EventType.LEAVE_IN_PROGRESS, Channel.EMAIL,
+                    "WFH Request Update", message);
+            // IN_APP notification (bell icon)
+            notificationService.createNotification(
+                    employee.getEmpId(), null, employee.getEmail(),
+                    EventType.LEAVE_IN_PROGRESS, Channel.IN_APP,
                     "WFH Request Update", message);
         });
     }
