@@ -284,9 +284,16 @@ public class AppraisalService {
     // FIX: Include UNDER_REVIEW — this status is set when L1 opens a SUBMITTED form.
     // Without it, the record disappears from L1's Pending tab the moment they open it.
     public List<EmployeeAppraisalSummaryDTO> getPendingForL1(String approverId) {
+        // Include FINAL_REVIEW: when L1 is sole approver (no L2), status jumps to FINAL_REVIEW
+        // so they can publish directly from their queue.
         return appraisalRepo.findByFirstApproverIdAndStatusIn(approverId,
-                        Arrays.asList(AppraisalStatus.SUBMITTED, AppraisalStatus.UNDER_REVIEW, AppraisalStatus.L2_REJECTED))
-                .stream().map(this::buildSummary).collect(Collectors.toList());
+                        Arrays.asList(AppraisalStatus.SUBMITTED, AppraisalStatus.UNDER_REVIEW,
+                                AppraisalStatus.L2_REJECTED, AppraisalStatus.FINAL_REVIEW))
+                .stream()
+                // Only return FINAL_REVIEW records where there is no L2 (sole approver scenario)
+                .filter(a -> a.getStatus() != AppraisalStatus.FINAL_REVIEW
+                        || a.getFinalApproverId() == null)
+                .map(this::buildSummary).collect(Collectors.toList());
     }
 
     // ── Pending L2 ────────────────────────────────────────────────────────────
@@ -327,7 +334,8 @@ public class AppraisalService {
      * FINAL_REVIEW, PUBLISHED) — not just the ones still pending action.
      */
     public List<EmployeeAppraisalSummaryDTO> getAllForL1Approver(String approverId) {
-        // Exclude records L1 should never see (not yet submitted by employee, or L1-rejected)
+        // Exclude only DRAFT and L1_REJECTED — never FINAL_REVIEW,
+        // because sole L1 approvers land records there directly.
         List<AppraisalStatus> excludeStatuses = Arrays.asList(
                 AppraisalStatus.DRAFT,
                 AppraisalStatus.L1_REJECTED
@@ -455,15 +463,27 @@ public class AppraisalService {
 
         if (req.getApproverLevel() == AppraisalRemark.ApproverLevel.L1) {
             if (req.isApprove()) {
-                appraisal.setStatus(AppraisalStatus.L1_APPROVED);
                 appraisal.setL1ReviewedAt(LocalDateTime.now());
-                appraisalRepo.save(appraisal);
 
-                recordHistory(appraisal, prev, AppraisalStatus.L1_APPROVED.name(),
-                        req.getApproverId(), approverName,
-                        AppraisalStatusHistory.ActionType.L1_APPROVED, req.getOverallRemark());
+                boolean noL2 = appraisal.getFinalApproverId() == null;
 
-                if (appraisal.getFinalApproverId() != null) {
+                if (noL2) {
+                    // L1 is the only approver — skip L1_APPROVED, go straight to FINAL_REVIEW
+                    appraisal.setStatus(AppraisalStatus.FINAL_REVIEW);
+                    appraisalRepo.save(appraisal);
+
+                    recordHistory(appraisal, prev, AppraisalStatus.FINAL_REVIEW.name(),
+                            req.getApproverId(), approverName,
+                            AppraisalStatusHistory.ActionType.L1_APPROVED,
+                            "Approved by L1 (sole approver) — moved to Final Review");
+                } else {
+                    appraisal.setStatus(AppraisalStatus.L1_APPROVED);
+                    appraisalRepo.save(appraisal);
+
+                    recordHistory(appraisal, prev, AppraisalStatus.L1_APPROVED.name(),
+                            req.getApproverId(), approverName,
+                            AppraisalStatusHistory.ActionType.L1_APPROVED, req.getOverallRemark());
+
                     String empName = resolveEmployeeName(appraisal.getEmployeeId());
                     notificationService.notifyL2PendingReview(
                             appraisal.getFinalApproverId(),
@@ -615,17 +635,17 @@ public class AppraisalService {
 
                 String l1OverallRemark = allRemarks.stream()
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() == null)
-                        .map(AppraisalRemark::getRemarkText).findFirst().orElse("");
+                        .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse("");
                 Integer l1OverallRating = allRemarks.stream()
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() == null)
-                        .map(AppraisalRemark::getRevisedRating).findFirst().orElse(null);
+                        .map(r -> r.getRevisedRating()).filter(v -> v != null).findFirst().orElse(null);
 
                 String l2OverallRemark = allRemarks.stream()
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L2 && r.getQuestion() == null)
-                        .map(AppraisalRemark::getRemarkText).findFirst().orElse("");
+                        .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse("");
                 Integer l2OverallRating = allRemarks.stream()
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L2 && r.getQuestion() == null)
-                        .map(AppraisalRemark::getRevisedRating).findFirst().orElse(null);
+                        .map(r -> r.getRevisedRating()).filter(v -> v != null).findFirst().orElse(null);
 
                 // FIX: build per-question remark lookup maps (were missing from original)
                 Map<Long, AppraisalRemark> l1Map = allRemarks.stream()
@@ -805,10 +825,10 @@ public class AppraisalService {
 
                 String l1OverallRemark = allRemarks.stream()
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() == null)
-                        .map(AppraisalRemark::getRemarkText).findFirst().orElse("—");
+                        .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse("—");
                 String l2OverallRemark = allRemarks.stream()
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L2 && r.getQuestion() == null)
-                        .map(AppraisalRemark::getRemarkText).findFirst().orElse("—");
+                        .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse("—");
 
                 Map<Long, AppraisalRemark> l1RemarkMap = allRemarks.stream()
                         .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() != null)
@@ -1169,10 +1189,10 @@ public class AppraisalService {
             String l2Name    = resolveEmployeeName(appraisal.getFinalApproverId());
             String l1Overall = allRemarks.stream()
                     .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() == null)
-                    .map(AppraisalRemark::getRemarkText).findFirst().orElse("—");
+                    .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse("—");
             String l2Overall = allRemarks.stream()
                     .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L2 && r.getQuestion() == null)
-                    .map(AppraisalRemark::getRemarkText).findFirst().orElse("—");
+                    .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse("—");
 
             // ── Approver Info ────────────────────────────────────────────────
             Font smallFont = new Font(Font.HELVETICA, 8, Font.ITALIC);
@@ -1599,10 +1619,10 @@ public class AppraisalService {
 
         String l1OverallRemark = remarks.stream()
                 .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L1 && r.getQuestion() == null)
-                .map(AppraisalRemark::getRemarkText).findFirst().orElse(null);
+                .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse(null);
         String l2OverallRemark = remarks.stream()
                 .filter(r -> r.getApproverLevel() == AppraisalRemark.ApproverLevel.L2 && r.getQuestion() == null)
-                .map(AppraisalRemark::getRemarkText).findFirst().orElse(null);
+                .map(AppraisalRemark::getRemarkText).filter(v -> v != null).findFirst().orElse(null);
 
         Map<String, List<AppraisalDetailDTO.QuestionAnswerDTO>> bySection = new LinkedHashMap<>();
 
@@ -1714,6 +1734,42 @@ public class AppraisalService {
         if (!allRatedSelfRatings.isEmpty()) {
             double overall = allRatedSelfRatings.stream().mapToInt(i -> i).average().orElse(0.0);
             dto.setOverallAvgRating(Math.round(overall * 100.0) / 100.0);
+        }
+
+        // ── Combined average: (self + L1) / 2  OR  (self + L1 + L2) / 3 ─────
+        boolean hasSoleApprover = appraisal.getFinalApproverId() == null;
+        List<Double> selfRatingsForCombined = new ArrayList<>();
+        List<Double> l1RatingsForCombined   = new ArrayList<>();
+        List<Double> l2RatingsForCombined   = new ArrayList<>();
+
+        for (Map.Entry<String, List<AppraisalDetailDTO.QuestionAnswerDTO>> e : sorted.entrySet()) {
+            if (SUGGESTION_SECTION.equalsIgnoreCase(e.getKey())) continue;
+            for (AppraisalDetailDTO.QuestionAnswerDTO qa : e.getValue()) {
+                if (qa.getSelfRating() != null)
+                    selfRatingsForCombined.add(qa.getSelfRating().doubleValue());
+                Integer l1r = qa.getRevisedRating() != null ? qa.getRevisedRating() : qa.getL1RevisedRating();
+                if (l1r != null)
+                    l1RatingsForCombined.add(l1r.doubleValue());
+                if (!hasSoleApprover) {
+                    Integer l2r = qa.getFinalRating() != null ? qa.getFinalRating() : qa.getL2RevisedRating();
+                    if (l2r != null)
+                        l2RatingsForCombined.add(l2r.doubleValue());
+                }
+            }
+        }
+
+        if (!selfRatingsForCombined.isEmpty() && !l1RatingsForCombined.isEmpty()) {
+            double selfAvg = selfRatingsForCombined.stream().mapToDouble(d -> d).average().orElse(0.0);
+            double l1Avg   = l1RatingsForCombined.stream().mapToDouble(d -> d).average().orElse(0.0);
+
+            double combined;
+            if (!hasSoleApprover && !l2RatingsForCombined.isEmpty()) {
+                double l2Avg = l2RatingsForCombined.stream().mapToDouble(d -> d).average().orElse(0.0);
+                combined = (selfAvg + l1Avg + l2Avg) / 3.0;
+            } else {
+                combined = (selfAvg + l1Avg) / 2.0;
+            }
+            dto.setCombinedAvgRating(Math.round(combined * 100.0) / 100.0);
         }
 
         return dto;

@@ -1,6 +1,7 @@
 package com.emp_management.feature.apprasial.dto;
 
 import com.emp_management.feature.apprasial.enums.AppraisalStatus;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,6 +24,7 @@ public class AppraisalDetailDTO {
     private LocalDateTime l1ReviewedAt;
     private LocalDateTime publishedAt;
     private Double overallAvgRating;
+    private Double combinedAvgRating;  // (emp + L1) / 2  or  (emp + L1 + L2) / 3
 
     private String firstApproverId;
     private String firstApproverName;
@@ -52,6 +54,7 @@ public class AppraisalDetailDTO {
     public LocalDateTime getL1ReviewedAt() { return l1ReviewedAt; } public void setL1ReviewedAt(LocalDateTime v) { l1ReviewedAt = v; }
     public LocalDateTime getPublishedAt() { return publishedAt; } public void setPublishedAt(LocalDateTime v) { publishedAt = v; }
     public Double getOverallAvgRating() { return overallAvgRating; } public void setOverallAvgRating(Double v) { overallAvgRating = v; }
+    public Double getCombinedAvgRating() { return combinedAvgRating; } public void setCombinedAvgRating(Double v) { combinedAvgRating = v; }
     public String getFirstApproverId() { return firstApproverId; }   public void setFirstApproverId(String v)   { firstApproverId = v; }
     public String getFirstApproverName() { return firstApproverName; } public void setFirstApproverName(String v) { firstApproverName = v; }
     public String getFinalApproverId() { return finalApproverId; }   public void setFinalApproverId(String v)   { finalApproverId = v; }
@@ -105,6 +108,7 @@ public class AppraisalDetailDTO {
         public Long getQuestionId() { return questionId; }               public void setQuestionId(Long v)          { questionId = v; }
         public String getQuestionText() { return questionText; }         public void setQuestionText(String v)      { questionText = v; }
         public String getInputType() { return inputType; }               public void setInputType(String v)         { inputType = v; }
+        @JsonProperty("isRequired")
         public boolean isRequired() { return isRequired; }               public void setRequired(boolean v)         { isRequired = v; }
         public String getAnswerText() { return answerText; }             public void setAnswerText(String v)        { answerText = v; }
         public Integer getSelfRating() { return selfRating; }            public void setSelfRating(Integer v)       { selfRating = v; }
