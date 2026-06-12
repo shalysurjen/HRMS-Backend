@@ -23,7 +23,6 @@ public interface WfhApplicationRepository extends JpaRepository<WfhApplication, 
             "AND w.status IN ('APPROVED', 'PENDING')")
     BigDecimal sumTotalDaysByEmployee(@Param("empId") String empId);
 
-    // ── Overlap: existing WFH ─────────────────────────────────────
     @Query("""
         SELECT w FROM WfhApplication w
         WHERE w.employee.empId = :empId
@@ -36,7 +35,6 @@ public interface WfhApplicationRepository extends JpaRepository<WfhApplication, 
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate);
 
-    // ── Overlap: existing WFH, excluding self (for edit) ──────────
     @Query("""
         SELECT w FROM WfhApplication w
         WHERE w.employee.empId = :empId
@@ -51,21 +49,37 @@ public interface WfhApplicationRepository extends JpaRepository<WfhApplication, 
             @Param("endDate") LocalDate endDate,
             @Param("excludeId") Long excludeId);
 
-    @org.springframework.data.jpa.repository.Query("""
+    @Query("""
         SELECT w FROM WfhApplication w
         WHERE MONTH(w.createdAt) = :month
           AND YEAR(w.createdAt)  = :year
         ORDER BY w.createdAt ASC
     """)
     List<WfhApplication> findByCreatedAtMonthAndYear(
-            @org.springframework.data.repository.query.Param("month") int month,
-            @org.springframework.data.repository.query.Param("year") int year);
+            @Param("month") int month,
+            @Param("year") int year);
 
     List<WfhApplication> findByStartDateBetweenOrderByStartDateAsc(
-            java.time.LocalDate from, java.time.LocalDate to);
+            LocalDate from, LocalDate to);
 
+    // Existing — used by LeaveApplicationService
     List<WfhApplication> findByEmployee_EmpIdInAndStartDateBetweenOrderByStartDateAsc(
             java.util.List<String> empIds,
-            java.time.LocalDate from,
-            java.time.LocalDate to);
+            LocalDate from,
+            LocalDate to);
+
+    // For AttendanceDetailedService — pass enums as parameters (not string literals)
+    @Query("""
+        SELECT w FROM WfhApplication w
+        WHERE w.employee.empId = :empId
+          AND w.status IN :statuses
+          AND w.startDate <= :toDate
+          AND w.endDate   >= :fromDate
+        ORDER BY w.startDate ASC
+    """)
+    List<WfhApplication> findApprovedAndPendingByEmpIdAndDateRange(
+            @Param("empId")    String empId,
+            @Param("statuses") List<RequestStatus> statuses,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate")   LocalDate toDate);
 }
