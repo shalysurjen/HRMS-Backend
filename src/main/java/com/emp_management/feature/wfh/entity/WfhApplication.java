@@ -42,8 +42,8 @@ public class WfhApplication {
 
     @Column(name = "total_days", nullable = false, precision = 5, scale = 1)
     private BigDecimal totalDays;
-
-    @Column(nullable = false, length = 500)
+    // AFTER:
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String reason;
 
     // ───────────────── ATTACHMENT ─────────────────
