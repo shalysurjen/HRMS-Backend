@@ -62,27 +62,17 @@ public interface CarryForwardLeaveApplicationRepository
     List<CarryForwardLeaveApplication> findPendingByApproverRole(
             @Param("approverRole") String approverRole);
 
-    /**
-     * Pending applications for a specific approver role, further filtered
-     * to only the applicants who are direct reports of the given manager.
-     *
-     * Used when MANAGER-role approvers should only see their own team's queue,
-     * not every employee in the company at that approval level.
-     */
-//    @Query("""
-//           SELECT cfa
-//           FROM CarryForwardLeaveApplication cfa
-//           JOIN Employee e ON e.id = cfa.employeeId
-//           WHERE cfa.status = 'PENDING'
-//             AND e.reportingId = :managerId
-//             AND (
-//               (cfa.currentApprovalLevel = 1 AND cfa.level1RequiredRole = :approverRole)
-//               OR
-//               (cfa.currentApprovalLevel = 2 AND cfa.level2RequiredRole = :approverRole)
-//             )
-//           ORDER BY cfa.createdAt ASC
-//           """)
-//    List<CarryForwardLeaveApplication> findPendingByManagerAndRole(
-//            @Param("managerId") String managerId,
-//            @Param("approverRole") String approverRole);
+    // ── For AttendanceDetailedService: APPROVED CF leaves overlapping date range ──
+    @Query("""
+        SELECT c FROM CarryForwardLeaveApplication c
+        WHERE c.employee.empId = :empId
+          AND c.status = 'APPROVED'
+          AND c.startDate <= :toDate
+          AND c.endDate   >= :fromDate
+        ORDER BY c.startDate ASC
+    """)
+    List<CarryForwardLeaveApplication> findApprovedByEmpIdAndDateRange(
+            @Param("empId")    String empId,
+            @Param("fromDate") java.time.LocalDate fromDate,
+            @Param("toDate")   java.time.LocalDate toDate);
 }

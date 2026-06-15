@@ -2,6 +2,7 @@ package com.emp_management.feature.attendance.controller;
 
 import com.emp_management.feature.attendance.dto.*;
 import com.emp_management.feature.attendance.service.AttendanceService;
+import com.emp_management.feature.attendance.service.AttendanceDetailedService;
 import com.emp_management.feature.employee.dto.NameDto;
 import com.emp_management.feature.employee.service.EmployeeService;
 import jakarta.validation.Valid;
@@ -23,10 +24,59 @@ public class AttendanceController {
 
     private final AttendanceService service;
     private final EmployeeService empService;
+    private final AttendanceDetailedService detailedService;
 
-    public AttendanceController(AttendanceService service, EmployeeService empService) {
+    public AttendanceController(AttendanceService service, EmployeeService empService,
+                                AttendanceDetailedService detailedService) {
         this.service = service;
         this.empService = empService;
+        this.detailedService = detailedService;
+    }
+
+    /**
+     * GET /v1/attendance/detailed/{empId}?fromDate=&toDate=&page=&size=
+     *
+     * 13-column detailed attendance for one employee:
+     * Emp ID, Emp Name, Date, Check In, Check Out, Work Hours,
+     * CF Leave(Days), GL(Days), SL(Days), WFH(Days), Permission(Hours), LOP(Days),
+     * Approval Status  +  punchRecords (for Timeline drawer)
+     */
+    @GetMapping("/detailed/{empId}")
+    public Page<AttendanceDetailedRowDTO> getDetailedAttendance(
+            @PathVariable String empId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+
+        LocalDate from = fromDate != null ? fromDate : LocalDate.now().withDayOfMonth(1);
+        LocalDate to   = toDate   != null ? toDate   : LocalDate.now();
+        return detailedService.getDetailedRows(empId, from, to, page, size);
+    }
+
+    /**
+     * GET /v1/attendance/detailed/{empId}/download?fromDate=&toDate=
+     * Downloads the 13-column detailed attendance table as Excel.
+     * Row 1: From Date / To Date, Row 2: blank, Row 3: headers, Row 4+: data.
+     */
+    @GetMapping("/detailed/{empId}/download")
+    public ResponseEntity<InputStreamResource> downloadDetailedExcel(
+            @PathVariable String empId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate) {
+
+        LocalDate from = fromDate != null ? fromDate : LocalDate.now().withDayOfMonth(1);
+        LocalDate to   = toDate   != null ? toDate   : LocalDate.now();
+
+        ByteArrayInputStream in = detailedService.exportDetailedToExcel(empId, from, to);
+
+        String fileName = "Attendance_" + empId + "_" + from + "_to_" + to + ".xlsx";
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(new InputStreamResource(in));
     }
 
     // 🔹 Employee Calendar
@@ -189,6 +239,25 @@ public class AttendanceController {
         ByteArrayInputStream in = service.exportTeamAttendanceToExcel(records);
 
         String fileName = "Organization_Attendance_" + fromDate + "_to_" + toDate + ".xlsx";
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(new InputStreamResource(in));
+    }
+
+    /**
+     * POST /v1/attendance/detailed/download/bulk
+     * New 15-column format export for multiple employees from list view
+     */
+    @PostMapping("/detailed/download/bulk")
+    public ResponseEntity<InputStreamResource> downloadBulkDetailedExcel(
+            @RequestBody BulkDetailedExportRequest request) {
+
+        ByteArrayInputStream in = detailedService.exportBulkDetailedToExcel(
+                request.getEmpIds(), request.getFromDate(), request.getToDate());
+
+        String fileName = "Attendance_Report_" + request.getFromDate() + "_to_" + request.getToDate() + ".xlsx";
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")

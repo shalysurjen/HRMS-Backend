@@ -1313,6 +1313,22 @@ public class AppraisalService {
                     sCell.setPadding(4); sCell.setBackgroundColor(suggBg);
                     sCell.addElement(new Phrase(q.getQuestionText(), normalFont));
                     sCell.addElement(new Phrase("Answer: " + suggAns, smallFont));
+
+                    // Suggestions have no rating, but L1/L2 may still leave a remark —
+                    // show it (same as the Excel export already does).
+                    String suggL1Remark = (ans != null && ans.getRevisedRemarks() != null)
+                            ? ans.getRevisedRemarks()
+                            : (l1r != null ? l1r.getRemarkText() : null);
+                    if (suggL1Remark != null && !suggL1Remark.isBlank()) {
+                        sCell.addElement(new Phrase("L1 Remark: " + suggL1Remark, remarkL1Font));
+                    }
+                    String suggL2Remark = (ans != null && ans.getFinalRemarks() != null)
+                            ? ans.getFinalRemarks()
+                            : (l2r != null ? l2r.getRemarkText() : null);
+                    if (suggL2Remark != null && !suggL2Remark.isBlank()) {
+                        sCell.addElement(new Phrase("L2 Remark: " + suggL2Remark, remarkL2Font));
+                    }
+
                     suggTable.addCell(sCell);
                     doc.add(suggTable);
                 } else {
@@ -1440,10 +1456,21 @@ public class AppraisalService {
             CellStyle l1Style = wb.createCellStyle();
             l1Style.setFillForegroundColor(IndexedColors.LIGHT_TURQUOISE.getIndex());
             l1Style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            l1Style.setWrapText(true);
+            l1Style.setVerticalAlignment(org.apache.poi.ss.usermodel.VerticalAlignment.TOP);
 
             CellStyle l2Style = wb.createCellStyle();
             l2Style.setFillForegroundColor(IndexedColors.LAVENDER.getIndex());
             l2Style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+            l2Style.setWrapText(true);
+            l2Style.setVerticalAlignment(org.apache.poi.ss.usermodel.VerticalAlignment.TOP);
+
+            // FIX: long "Your Answer" text was visually overflowing into the empty
+            // Self/L1/L2 Rating columns for Suggestion rows — wrap it so it stays
+            // inside its own column.
+            CellStyle answerStyle = wb.createCellStyle();
+            answerStyle.setWrapText(true);
+            answerStyle.setVerticalAlignment(org.apache.poi.ss.usermodel.VerticalAlignment.TOP);
 
             String[] columns = {
                     "Section", "Question", "Your Answer", "Self Rating",
@@ -1487,7 +1514,9 @@ public class AppraisalService {
                 Row row = sheet.createRow(rowNum++);
                 row.createCell(0).setCellValue(secName);
                 row.createCell(1).setCellValue(q.getQuestionText());
-                row.createCell(2).setCellValue(ans != null && ans.getAnswerText() != null ? ans.getAnswerText() : "");
+                Cell answerCell = row.createCell(2);
+                answerCell.setCellValue(ans != null && ans.getAnswerText() != null ? ans.getAnswerText() : "");
+                answerCell.setCellStyle(answerStyle);
 
                 if (!isSuggestion && ans != null && ans.getSelfRating() != null)
                     row.createCell(3).setCellValue(ans.getSelfRating());
