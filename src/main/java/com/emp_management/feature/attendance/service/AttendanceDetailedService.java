@@ -201,8 +201,7 @@ public class AttendanceDetailedService {
                 .filter(cf -> cf.getStartDate() != null && cf.getEndDate() != null
                         && !date.isBefore(cf.getStartDate())
                         && !date.isAfter(cf.getEndDate()))
-                .mapToDouble(cf -> cf.getDays() != null
-                        ? cf.getDays().doubleValue() : 0.0)
+                .mapToDouble(cf -> (cf.getDays() != null && cf.getDays().doubleValue() == 0.5) ? 0.5 : 1.0)
                 .sum();
         row.setCfLeaveDays(cfDays > 0 ? cfDays : null);
 
@@ -228,9 +227,10 @@ public class AttendanceDetailedService {
                         ? l.getLeaveType().getLeaveType().toUpperCase() : "";
 
                 if (typeName.contains("SICK") || typeName.equals("SL")) {
-                    slDays += l.getDays() != null ? l.getDays().doubleValue() : 0.0;
+                    // Per-date contribution: 1 full day, or 0.5 if the whole application is a half-day
+                    slDays += (l.getDays() != null && l.getDays().doubleValue() == 0.5) ? 0.5 : 1.0;
                 } else {
-                    glDays += l.getDays() != null ? l.getDays().doubleValue() : 0.0;
+                    glDays += (l.getDays() != null && l.getDays().doubleValue() == 0.5) ? 0.5 : 1.0;
                 }
                 // LOP only applies on APPROVED
                 if (l.getStatus() == RequestStatus.APPROVED) {
@@ -256,12 +256,8 @@ public class AttendanceDetailedService {
             if (w.getStatus() == RequestStatus.APPROVED
                     || w.getStatus() == RequestStatus.PENDING
                     || w.getStatus() == RequestStatus.REJECTED) {
-                // Use totalDays when available (handles half-day WFH correctly)
-                if (w.getTotalDays() != null) {
-                    wfhDays += w.getTotalDays().doubleValue();
-                } else {
-                    wfhDays += 1.0;
-                }
+                // Per-date contribution: 1 full day, or 0.5 if the whole application is a half-day
+                wfhDays += (w.getTotalDays() != null && w.getTotalDays().doubleValue() == 0.5) ? 0.5 : 1.0;
             }
         }
         row.setWfhDays(wfhDays > 0 ? wfhDays : null);
